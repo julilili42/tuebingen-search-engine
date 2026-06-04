@@ -5,8 +5,8 @@ use std::{
     fs::{self, File},
     io,
     path::{Path, PathBuf},
+    time::Instant,
 };
-use tiny_http::{Header, Response, Server};
 
 #[derive(Parser, Debug)]
 #[command(name = "tuebingen-search")]
@@ -32,11 +32,7 @@ enum Commands {
         #[arg(short, long)]
         query: String,
         #[arg(short, long, default_value_t = 10)]
-        n_th: usize,
-    },
-    Serve {
-        #[arg(short, long, default_value = "localhost:8000")]
-        adress: String,
+        top_n: usize,
     },
 }
 
@@ -126,41 +122,14 @@ fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Index { dir, output } => index(&dir, &output),
-        Commands::Search { index, query, n_th } => search(&index, &query, n_th),
-        Commands::Serve { adress } => {
-            let server = Server::http(&adress).expect("TODO");
-
-            println!("listening at http://{adress}/ ...");
-
-            for request in server.incoming_requests() {
-                println!(
-                    "received request! method: {:?}, url: {:?}",
-                    request.method(),
-                    request.url(),
-                );
-
-                let response = Response::from_string(
-                    r#"
-                <html>
-                <head>
-                <title>Test</title>
-                </head>
-                <body>
-                <h1>Test</h1>
-                </body>
-                </html>
-                "#,
-                )
-                .with_header(
-                    Header::from_bytes("Content-Type", "text/html; charset=utf-8").expect("TODO"),
-                );
-                request.respond(response).expect("TODO");
-            }
-
-            Ok(())
-        }
+        Commands::Index { dir, output } => index(&dir, &output)?,
+        Commands::Search {
+            index,
+            query,
+            top_n,
+        } => search(&index, &query, top_n)?,
     }
+    Ok(())
 }
 
 fn tokenize(text: &str) -> Vec<String> {
@@ -171,68 +140,68 @@ fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn search(index_path: &str, query: &str, n_th: usize) -> io::Result<()> {
-    let index_file = File::open(index_path)?;
-    println!("Reading {index_path} index file");
-    let search_index: SearchIndex = serde_json::from_reader(index_file).expect("TODO");
+fn search(index_path: &str, query: &str, top_n: usize) -> io::Result<()> {
+    let start = Instant::now();
 
-    let term_freq_index = search_index.term_frequency_index;
-    let inverse_document_index = search_index.inverse_document_index;
+    let index_file = File::open(index_path)?;
+    println!("INFO: Opened file after {:?}", start.elapsed());
+    let load_start = Instant::now();
+
+    println!("INFO: Reading {index_path} inverted index.");
+    let inverted_index: InvertedIndex = serde_json::from_reader(index_file).expect("TODO");
+
+    println!("INFO: Loaded index after {:?}", load_start.elapsed());
 
     println!(
-        "{index_path} contains {count_files}",
-        count_files = term_freq_index.len()
+        "INFO: {index_path} contains {count_terms} terms.",
+        count_terms = inverted_index.len()
     );
 
+    let search_start = Instant::now();
+
+    // prepare query
     let mut query_terms = tokenize(query);
     query_terms.sort();
     query_terms.dedup();
 
     if query_terms.is_empty() {
-        eprintln!("No searchable query terms in query.");
+        eprintln!("ERROR: No searchable query terms in query.");
         return Ok(());
     }
 
-    println!("Searching for {query_terms:?} ...");
+    println!("INFO: Searching for {query_terms:?} ...");
 
-    let mut result = term_freq_index
-        .iter()
-        .map(|(path, term_frequency)| {
-            let score: f64 = query_terms
-                .iter()
-                .map(|term| {
-                    // retrieves frequency of for each query term in document 
-                    let tf = term_frequency.get(term).copied().unwrap_or(0) as f64;
-                    let idf = inverse_document_index.get(term).copied().unwrap_or(0.0);
+    let mut scores: HashMap<PathBuf, f64> = HashMap::new();
 
-                    tf * idf
-                })
-                .sum();
+    for term in query_terms {
+        if let Some(postings) = inverted_index.get(&term) {
+            for posting in postings {
+                *scores.entry(posting.path.clone()).or_insert(0.0) += posting.score;
+            }
+        }
+    }
 
-            (path, score)
-        })
-        .filter(|(_, score)| *score > 0.0)
-        .collect::<Vec<_>>();
+    let mut results = scores.into_iter().collect::<Vec<_>>();
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-    for (path, score) in result.iter().take(n_th) {
+    for (path, score) in results.iter().take(top_n) {
         println!("{score:>8.3} {}", path.display());
     }
 
+    println!("INFO: Search computation took {:?}", search_start.elapsed());
     Ok(())
 }
 
 type TermFreq = HashMap<String, usize>;
 type TermFreqIndex = HashMap<PathBuf, TermFreq>;
 type InverseDocumentIndex = HashMap<String, f64>;
+type InvertedIndex = HashMap<String, Vec<Posting>>;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct SearchIndex {
-    term_frequency_index: TermFreqIndex,
-    inverse_document_index: InverseDocumentIndex,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct Posting {
+    path: PathBuf,
+    score: f64,
 }
-
 
 fn compute_idf(index: &TermFreqIndex) -> InverseDocumentIndex {
     let n = index.len();
@@ -253,6 +222,34 @@ fn compute_idf(index: &TermFreqIndex) -> InverseDocumentIndex {
         .collect()
 }
 
+fn build_inverted_index(term_freq_index: TermFreqIndex) -> InvertedIndex {
+    let idf = compute_idf(&term_freq_index);
+    let mut inverted_index = InvertedIndex::new();
+
+    for (file_path, term_frequency) in term_freq_index {
+        for (term, frequency) in term_frequency {
+            let idf_score = idf.get(&term).copied().unwrap_or(0.0);
+            let score = idf_score * frequency as f64;
+
+            inverted_index.entry(term).or_default().push(Posting {
+                path: file_path.clone(),
+                score,
+            });
+        }
+    }
+
+    // pre-ordering of inverted index speeds up search
+    for postings in inverted_index.values_mut() {
+        postings.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    inverted_index
+}
+
 fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
     let dir = fs::read_dir(dir_path)?;
 
@@ -267,6 +264,7 @@ fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
 
     for file in dir {
         let file = file?;
+
         let file_type = file.file_type()?;
         let file_path = file.path();
         let file_extension = file_path
@@ -276,17 +274,17 @@ fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
             .unwrap_or(false);
 
         if !file_type.is_file() {
-            eprintln!("Skipped non-file {file:?}", file = file.path());
+            eprintln!("ERROR: Skipped non-file {file:?}", file = file.path());
             continue;
         }
 
         // crawler might have saved other file extensions, only use html
         if !file_extension {
-            eprintln!("Skipped non-html file {file:?}", file = file.path());
+            eprintln!("ERROR: Skipped non-html file {file:?}", file = file.path());
             continue;
         }
 
-        println!("Indexing {file_path:?}");
+        println!("INFO: Indexing {file_path:?}");
 
         let text = extract_text_from_html(&file_path, &selector)?;
         let terms = tokenize(&text);
@@ -300,20 +298,16 @@ fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
         term_frequency_index.insert(file_path, term_frequency);
     }
 
-    let inverse_document_index: InverseDocumentIndex = compute_idf(&term_frequency_index);
-
     for (path, tf) in &term_frequency_index {
-        println!("{path:?} has {count} unique tokens", count = tf.len())
+        println!("INFO: {path:?} has {count} unique tokens", count = tf.len())
     }
 
-    let search_index = SearchIndex {
-        term_frequency_index,
-        inverse_document_index
-    };
+    println!("INFO: Computing inverted index...");
+    let inverted_index = build_inverted_index(term_frequency_index);
 
-    println!("Saving {index_path} ...");
+    println!("INFO: Saving {index_path}...");
     let index_file = File::create(index_path)?;
-    serde_json::to_writer(index_file, &search_index).expect("TODO");
+    serde_json::to_writer(index_file, &inverted_index).expect("TODO");
 
     Ok(())
 }

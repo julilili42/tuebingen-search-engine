@@ -391,10 +391,10 @@ type Config struct {
 func new_default_config() Config {
 	return Config{
 		starting_url:    "https://www.tuepedia.de",
-		max_pages:       100,
+		max_pages:       -1,
 		request_timeout: time.Duration(30 * time.Second),
 		retry_delay:     time.Duration(10 * time.Second),
-		request_delay:   time.Duration(500 * time.Millisecond),
+		request_delay:   time.Duration(10 * time.Millisecond),
 		retries:         3,
 		accept:          "text/html",
 		user_agent:      "SimpleLinkCrawler/0.1",
