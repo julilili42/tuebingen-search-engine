@@ -25,19 +25,23 @@ func fetch_bytes(
 	retry_delay time.Duration,
 	retries int,
 	accept string,
+	user_agent string,
 ) ([]byte, error) {
 	for attempt := range retries {
 		if attempt > 0 {
 			fmt.Printf("INFO: Retry attempt %d ... \n", attempt)
 		}
-		req, err := http.NewRequest("GET", url, nil)
 
+		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			return nil, err
 		}
 
 		if accept != "" {
 			req.Header.Set("Accept", accept)
+		}
+		if user_agent != "" {
+			req.Header.Set("User-Agent", user_agent)
 		}
 
 		resp, err := client.Do(req)
@@ -72,6 +76,13 @@ func fetch_bytes(
 			resp.Body.Close()
 			continue
 		}
+		content_type := resp.Header.Get("Content-Type")
+		if !strings.Contains(content_type, "text/html") {
+			fmt.Printf("INFO: Skipping non-html file %s \n", url)
+			resp.Body.Close()
+			continue
+		}
+
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
@@ -81,6 +92,46 @@ func fetch_bytes(
 		return body, nil
 	}
 	return nil, fmt.Errorf("ERROR: Failed to fetch %s after %d retries", url, retries)
+}
+
+func canonical_url(raw_url string, base *url.URL, allowed_host string) (string, bool) {
+	parsed_url, err := url.Parse(raw_url)
+	if err != nil {
+		return "", false
+	}
+
+	/*
+		Scheme   // https
+		Host     // www.tuepedia.de
+		Path     // /wiki/T%C3%BCbingen
+		RawQuery // a=1&b=2
+		Fragment // section
+	*/
+
+	// converts relative link to absolute link
+	absolute := base.ResolveReference(parsed_url)
+
+	if absolute.Scheme != "http" && absolute.Scheme != "https" {
+		return "", false
+	}
+
+	if absolute.Hostname() != allowed_host {
+		return "", false
+	}
+
+	// ignore RawQuery and Fragements
+	absolute.RawQuery = ""
+	absolute.Fragment = ""
+	absolute.Host = strings.ToLower(absolute.Host)
+
+	// delete trailing slash
+	if absolute.Path != "/" {
+		absolute.Path = strings.TrimRight(absolute.Path, "/")
+	}
+
+	final_url := absolute.String()
+
+	return final_url, true
 }
 
 func extract_urls(seen_urls map[string]bool, body []byte, current_url string, allowed_host string) ([]string, error) {
@@ -121,24 +172,11 @@ func extract_urls(seen_urls map[string]bool, body []byte, current_url string, al
 				continue
 			}
 
-			href, err := url.Parse(attr.Val)
-			if err != nil {
+			final_url, is_canonical := canonical_url(attr.Val, base, allowed_host)
+
+			if !is_canonical {
 				continue
 			}
-
-			absolute := base.ResolveReference(href)
-			absolute.RawQuery = ""
-			absolute.Fragment = ""
-
-			if absolute.Scheme != "http" && absolute.Scheme != "https" {
-				continue
-			}
-
-			if absolute.Hostname() != allowed_host {
-				continue
-			}
-
-			final_url := absolute.String()
 
 			if !seen_urls[final_url] {
 				seen_urls[final_url] = true
@@ -214,47 +252,66 @@ func save_html(hostname string, base_dir string, page_url string, body []byte) (
 func crawl(
 	starting_url string,
 	seen_urls map[string]bool,
-	max_pages int,
-	request_timeout time.Duration,
-	retry_delay time.Duration,
-	request_delay time.Duration,
-	retries int,
-	accept string,
-	save_dir string,
+	config Config,
 ) (map[string]string, error) {
-
 	client := &http.Client{
-		Timeout: request_timeout,
+		Timeout: config.request_timeout,
 	}
-	start, err := url.Parse(starting_url)
+
+	base, err := url.Parse(starting_url)
 	if err != nil {
-		fmt.Printf("ERROR: failed to parse starting url %s with error %s \n", start, err)
+		fmt.Printf("ERROR: failed to parse starting url %s with error %s \n", base, err)
 		return nil, err
 	}
-	allowed_host := start.Hostname()
+	allowed_host := base.Hostname()
 
-	queue := []string{starting_url}
-	head := 0
-	seen_urls[starting_url] = true
+	state_path := filepath.Join(config.save_dir, allowed_host, "crawl_state.json")
+	state, loaded, err := load_state(state_path)
+	if err != nil {
+		fmt.Printf("ERROR: failed to load intermediate state %s. \n", err)
+		return nil, err
+	}
 
-	index := map[string]string{}
+	canonical_start, is_canonical := canonical_url(starting_url, base, allowed_host)
+	if !is_canonical {
+		fmt.Printf("ERROR: starting url %s is not canonical %s \n", base, err)
+		return nil, err
+	}
+
+	var queue []string
+	var head int
+	var index map[string]string
+
+	if loaded {
+		queue = state.Queue
+		head = state.Head
+		seen_urls = state.Seen
+		index = state.Index
+
+		fmt.Printf("INFO: Resuming crawl at %s \n", queue[head])
+	} else {
+		queue = []string{canonical_start}
+		head = 0
+		seen_urls[canonical_start] = true
+		index = map[string]string{}
+	}
 
 	for head < len(queue) {
-		if max_pages >= 0 && len(index) >= max_pages {
+		if config.max_pages >= 0 && len(index) >= config.max_pages {
 			break
 		}
 
 		current_url := queue[head]
 		head++
 		fmt.Printf("INFO: Fetching Bytes from %s \n", current_url)
-		bytes, err := fetch_bytes(current_url, client, retry_delay, retries, accept)
+		bytes, err := fetch_bytes(current_url, client, config.retry_delay, config.retries, config.accept, config.user_agent)
 		if err != nil {
 			fmt.Printf("ERROR: failed to fetch %s with error %s \n", current_url, err)
 			continue
 		}
 		// to avoid too many requests
-		time.Sleep(request_delay)
-		path, err := save_html(allowed_host, save_dir, current_url, bytes)
+		time.Sleep(config.request_delay)
+		path, err := save_html(allowed_host, config.save_dir, current_url, bytes)
 		if err != nil {
 			fmt.Printf("ERROR: failed to save html %s with error %s \n", current_url, err)
 			continue
@@ -267,6 +324,18 @@ func crawl(
 			continue
 		}
 		queue = append(queue, extracted_urls...)
+
+		// allows to continue at crawling state if restarted
+		state := CrawlState{
+			Queue: queue,
+			Head:  head,
+			Seen:  seen_urls,
+			Index: index,
+		}
+
+		if err := save_state(state_path, state); err != nil {
+			fmt.Printf("ERROR: failed to save crawl state: %s\n", err)
+		}
 	}
 	return index, nil
 }
@@ -294,20 +363,86 @@ func save_jsonl(path string, index map[string]string) error {
 	return nil
 }
 
+type Config struct {
+	max_pages       int
+	request_timeout time.Duration
+	retry_delay     time.Duration
+	request_delay   time.Duration
+	retries         int
+	accept          string
+	user_agent      string
+	save_dir        string
+}
+
+type CrawlState struct {
+	Queue []string          `json:"queue"`
+	Head  int               `json:"head"`
+	Seen  map[string]bool   `json:"seen"`
+	Index map[string]string `json:"index"`
+}
+
+func save_state(path string, state CrawlState) error {
+	dir := filepath.Dir(path)
+
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		fmt.Printf("ERROR: failed to create folder while saving state with error %s \n", err)
+		return err
+	}
+
+	data, err := json.MarshalIndent(state, "", " ")
+
+	// use temp path to save data even if programm crashes
+	tmp_path := path + ".tmp"
+
+	err = os.WriteFile(tmp_path, data, 0644)
+	if err != nil {
+		fmt.Printf("ERROR: failed to write state with error %s \n", err)
+		return err
+	}
+
+	return os.Rename(tmp_path, path)
+}
+
+func load_state(path string) (CrawlState, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("INFO: no intermediate state found %s. \n", err)
+			return CrawlState{}, false, nil
+		}
+		fmt.Printf("ERROR: failed to find intermediate state %s, start with new state. \n", err)
+		return CrawlState{}, false, err
+	}
+
+	var state CrawlState
+	err = json.Unmarshal(data, &state)
+	if err != nil {
+		fmt.Printf("ERROR: failed to load intermediate state %s, start with new state. \n", err)
+		return CrawlState{}, false, err
+	}
+
+	fmt.Println("INFO: intermediate state was loaded successfully.")
+	return state, true, nil
+}
+
 func main() {
 	seen_urls := map[string]bool{}
 
 	url := "https://www.tuepedia.de"
 	request_timeout := time.Duration(30 * time.Second)
 	retry_delay := time.Duration(10 * time.Second)
-	request_delay := time.Duration(25 * time.Millisecond)
+	request_delay := time.Duration(500 * time.Millisecond)
 	retries := 3
 	accept := "text/html"
+	user_agent := "SimpleLinkCrawler/0.1"
 	html_path := "../data2"
 	jsonl_path := filepath.Join(html_path, "index.jsonl")
 	max_pages := 100
 
-	index, err := crawl(url, seen_urls, max_pages, request_timeout, retry_delay, request_delay, retries, accept, html_path)
+	config := Config{max_pages: max_pages, request_timeout: request_timeout, retry_delay: retry_delay, request_delay: request_delay, retries: retries, accept: accept, user_agent: user_agent, save_dir: html_path}
+
+	index, err := crawl(url, seen_urls, config)
 	if err != nil {
 		fmt.Printf("ERROR: failed to crawl with error %s \n", err)
 		return
