@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io,
+    io::{self, BufReader, BufWriter},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -23,11 +23,11 @@ enum Commands {
         #[arg(short, long, default_value = "../data/tuepedia/html")]
         dir: String,
 
-        #[arg(short, long, default_value = "index.json")]
+        #[arg(short, long, default_value = "index.bin")]
         output: String,
     },
     Search {
-        #[arg(short, long, default_value = "index.json")]
+        #[arg(short, long, default_value = "index.bin")]
         index: String,
         #[arg(short, long)]
         query: String,
@@ -145,20 +145,19 @@ fn search(index_path: &str, query: &str, top_n: usize) -> io::Result<()> {
 
     let index_file = File::open(index_path)?;
     println!("INFO: Opened file after {:?}", start.elapsed());
+
     let load_start = Instant::now();
-
+    let reader = BufReader::new(index_file);
     println!("INFO: Reading {index_path} inverted index.");
-    let inverted_index: InvertedIndex = serde_json::from_reader(index_file).expect("TODO");
 
+    let search_index: SearchIndex = bincode::deserialize_from(reader).expect("TODO");
     println!("INFO: Loaded index after {:?}", load_start.elapsed());
-
     println!(
-        "INFO: {index_path} contains {count_terms} terms.",
-        count_terms = inverted_index.len()
+        "INFO: {index_path} contains {count_documents} documents.",
+        count_documents = search_index.documents.len()
     );
 
     let search_start = Instant::now();
-
     // prepare query
     let mut query_terms = tokenize(query);
     query_terms.sort();
@@ -171,12 +170,12 @@ fn search(index_path: &str, query: &str, top_n: usize) -> io::Result<()> {
 
     println!("INFO: Searching for {query_terms:?} ...");
 
-    let mut scores: HashMap<PathBuf, f64> = HashMap::new();
+    let mut scores: HashMap<u32, f32> = HashMap::new();
 
     for term in query_terms {
-        if let Some(postings) = inverted_index.get(&term) {
+        if let Some(postings) = search_index.inverted_index.get(&term) {
             for posting in postings {
-                *scores.entry(posting.path.clone()).or_insert(0.0) += posting.score;
+                *scores.entry(posting.doc_index.clone()).or_insert(0.0) += posting.score;
             }
         }
     }
@@ -184,7 +183,8 @@ fn search(index_path: &str, query: &str, top_n: usize) -> io::Result<()> {
     let mut results = scores.into_iter().collect::<Vec<_>>();
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    for (path, score) in results.iter().take(top_n) {
+    for (doc_index, score) in results.iter().take(top_n) {
+        let path = &search_index.documents[*doc_index as usize];
         println!("{score:>8.3} {}", path.display());
     }
 
@@ -194,13 +194,21 @@ fn search(index_path: &str, query: &str, top_n: usize) -> io::Result<()> {
 
 type TermFreq = HashMap<String, usize>;
 type TermFreqIndex = HashMap<PathBuf, TermFreq>;
-type InverseDocumentIndex = HashMap<String, f64>;
+type InverseDocumentIndex = HashMap<String, f32>;
+
 type InvertedIndex = HashMap<String, Vec<Posting>>;
+type DocIndex = u32;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SearchIndex {
+    documents: Vec<PathBuf>,
+    inverted_index: InvertedIndex,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Posting {
-    path: PathBuf,
-    score: f64,
+    doc_index: DocIndex,
+    score: f32,
 }
 
 fn compute_idf(index: &TermFreqIndex) -> InverseDocumentIndex {
@@ -216,38 +224,37 @@ fn compute_idf(index: &TermFreqIndex) -> InverseDocumentIndex {
     document_frequency
         .into_iter()
         .map(|(term, df)| {
-            let idf = ((1.0 + n as f64) / (1.0 + df as f64)).ln() + 1.0;
+            let idf = ((1.0 + n as f32) / (1.0 + df as f32)).ln() + 1.0;
             (term, idf)
         })
         .collect()
 }
 
-fn build_inverted_index(term_freq_index: TermFreqIndex) -> InvertedIndex {
+fn build_search_index(term_freq_index: TermFreqIndex) -> SearchIndex {
     let idf = compute_idf(&term_freq_index);
+
+    let mut documents = Vec::with_capacity(term_freq_index.len());
     let mut inverted_index = InvertedIndex::new();
 
     for (file_path, term_frequency) in term_freq_index {
+        let doc_index = documents.len() as DocIndex;
+
+        documents.push(file_path);
         for (term, frequency) in term_frequency {
             let idf_score = idf.get(&term).copied().unwrap_or(0.0);
-            let score = idf_score * frequency as f64;
+            let score = idf_score * frequency as f32;
 
-            inverted_index.entry(term).or_default().push(Posting {
-                path: file_path.clone(),
-                score,
-            });
+            inverted_index
+                .entry(term)
+                .or_default()
+                .push(Posting { doc_index, score });
         }
     }
 
-    // pre-ordering of inverted index speeds up search
-    for postings in inverted_index.values_mut() {
-        postings.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+    SearchIndex {
+        documents,
+        inverted_index,
     }
-
-    inverted_index
 }
 
 fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
@@ -303,11 +310,14 @@ fn index(dir_path: &str, index_path: &str) -> io::Result<()> {
     }
 
     println!("INFO: Computing inverted index...");
-    let inverted_index = build_inverted_index(term_frequency_index);
+    let search_index = build_search_index(term_frequency_index);
 
     println!("INFO: Saving {index_path}...");
+
     let index_file = File::create(index_path)?;
-    serde_json::to_writer(index_file, &inverted_index).expect("TODO");
+    let writer = BufWriter::new(index_file);
+
+    bincode::serialize_into(writer, &search_index).expect("TODO");
 
     Ok(())
 }

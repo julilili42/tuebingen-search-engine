@@ -1,4 +1,5 @@
 tuebingen_search/target
+index.bin
 index.json
 /__pycache__
 /data
