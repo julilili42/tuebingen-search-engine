@@ -7,6 +7,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
 from .models import CrawlState, Statistics
+from urllib.parse import urlparse
+import hashlib
+
+# creates unique state path, s.t. multiple hostnames can be distinguished
+def generate_state_path(save_dir: str, host: str, canonical_start_url: str) -> Path:
+    digest = hashlib.sha256(canonical_start_url.encode("utf-8")).hexdigest()[:12]
+    return Path(save_dir) / host / f"crawl_state-{digest}.json"
 
 # saving of intermediate state
 def save_state(path: str | Path, state: CrawlState) -> None:

@@ -1,8 +1,9 @@
 tuebingen_search/target
 index.bin
 index.json
-/__pycache__
 /data
 /data2
 .DS_Store
-*/__pycache__
+__pycache__/
+.venv/
+.vscode/

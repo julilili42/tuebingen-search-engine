@@ -18,7 +18,16 @@ class LinkExtractor(HTMLParser):
             if key.lower() == "href" and value:
                 self.hrefs.append(value)
 
+def hostname_for_url(starting_url: str) -> str:
+    parsed = urlparse(starting_url)
 
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError(f"ERROR: failed to parse starting url {starting_url}")
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"ERROR: unsupported url scheme {parsed.scheme}")
+
+    return parsed.hostname.lower()
 
 def canonical_url(raw_url: str, base_url: str, allowed_host: str) -> Tuple[str, bool]:
     absolute = urljoin(base_url, raw_url)

@@ -3,14 +3,19 @@ from __future__ import annotations
 from dataclasses import field, dataclass
 from typing import List, Dict
 
-@dataclass
-class Config:
-    starting_url: str = "https://www.tuepedia.de"
+@dataclass(frozen=True)
+class CrawlSite:
+    url: str = "https://www.tuepedia.de/"
     max_pages: int = 100
     request_timeout: float = 30.0
     retry_delay: float = 10.0
     request_delay: float = 0.01
     retries: int = 3
+
+
+@dataclass
+class Config:
+    sites: List[CrawlSite] = field(default_factory=list)
     accept: str = "text/html"
     user_agent: str = "SimpleLinkCrawler/0.1"
     save_dir: str = "../data2"
@@ -29,6 +34,12 @@ class Statistics:
         print(f"Discovered: {self.discovered}")
         print(f"Failed:     {self.failed}")
         print(f"Saved:      {self.saved}")
+
+    def reset(self) -> None:
+        self.fetched = 0
+        self.discovered = 0
+        self.failed = 0
+        self.saved = 0
 
     def inc_fetched(self) -> None:
         self.fetched += 1
@@ -50,3 +61,4 @@ class CrawlState:
     seen: Dict[str, bool] = field(default_factory=dict)
     index: Dict[str, str] = field(default_factory=dict)
     statistics: Statistics = field(default_factory=Statistics)
+

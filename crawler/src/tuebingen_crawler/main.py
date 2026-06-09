@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
 from .crawler import crawl, save_jsonl
-from .models import Config, Statistics
-
-import httpx
-
+from .models import Config, CrawlSite
 
 def main() -> None:
-    seen_urls: Dict[str, bool] = {}
-    config = Config()
-    statistics = Statistics()
-
-    headers = {"Accept": config.accept, "User-Agent": config.user_agent}
-    client = httpx.Client(timeout=config.request_timeout, headers=headers)
-
+    tuepedia = CrawlSite()
+    wiki_tuebingen = CrawlSite(url="https://de.wikipedia.org/wiki/T%C3%BCbingen")
+    config = Config(sites=[wiki_tuebingen, tuepedia])
+    
     try:
-        index = crawl(client, config.starting_url, seen_urls, config, statistics)
+        index = crawl(config)
     except Exception as exc:
         print(f"ERROR: failed to crawl with error {exc}")
         return
@@ -28,9 +21,6 @@ def main() -> None:
     except Exception as exc:
         print(f"ERROR: failed to save jsonl file with error {exc}")
         return
-
-    statistics.print()
-
 
 if __name__ == "__main__":
     main()
