@@ -19,7 +19,7 @@ def crawl(config: Config) -> Dict[str, Dict[str, str]]:
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
 
     for site in sites:
-        with httpx.Client(timeout=site.request_timeout, headers=headers) as client:
+        with httpx.Client(timeout=site.request_timeout, headers=headers) as client:            
             seen_urls: Dict[str, bool] = {}
             statistics = Statistics()
             site_index = crawl_site(client, site, seen_urls, save_dir, save_state_every, statistics)

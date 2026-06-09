@@ -1,6 +1,6 @@
-tuebingen_search/target
-index.bin
-index.json
+search/target
+search/index.bin
+search/index.json
 /data
 /data2
 .DS_Store

@@ -10,6 +10,9 @@ dependencies = [
 [project.scripts]
 tuebingen-search = "tuebingen_search.cli:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/tuebingen_search"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
