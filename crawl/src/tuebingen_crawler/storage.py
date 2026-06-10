@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
 from .models import CrawlState, Statistics
 import hashlib
+
+logger = logging.getLogger(__name__)
 
 # creates unique state path, s.t. multiple hostnames can be distinguished
 def generate_state_path(save_dir: str, host: str, canonical_start_url: str) -> Path:
@@ -27,7 +30,7 @@ def save_state(path: str | Path, state: CrawlState) -> None:
 def load_state(path: str | Path) -> Tuple[CrawlState, bool]:
     path = Path(path)
     if not path.exists():
-        print(f"INFO: no intermediate state found {path}.")
+        logger.info("No intermediate state found %s.", path)
         return CrawlState(), False
 
     try:
@@ -39,8 +42,8 @@ def load_state(path: str | Path) -> Tuple[CrawlState, bool]:
             index=data.get("index", {}),
             statistics=Statistics(**data.get("statistics", {})),
         )
-        print("INFO: intermediate state was loaded successfully.")
+        logger.info("Intermediate state was loaded successfully.")
         return state, True
     except Exception as exc:
-        print(f"ERROR: failed to load intermediate state {exc}, start with new state.")
+        logger.error("Failed to load intermediate state %s.", exc)
         raise

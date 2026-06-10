@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Dict
@@ -9,6 +10,8 @@ from .storage import save_state, load_state, generate_state_path
 from .urls import canonical_url, extract_urls, hostname_for_url
 from .fetcher import fetch_bytes, save_html
 import httpx
+
+logger = logging.getLogger(__name__)
 
 def crawl(config: Config) -> Dict[str, Dict[str, str]]:
     index: Dict[str, Dict[str, str]] = {}
@@ -69,9 +72,9 @@ def crawl_site(
         statistics.saved = state.statistics.saved
 
         if head < len(queue):
-            print(f"INFO: Resuming crawl at {queue[head]}")
+            logger.info("Resuming crawl at %s", queue[head])
         else:
-            print("INFO: Crawl state is already complete")
+            logger.info("Crawl state is already complete")
     else:
         queue = [canonical_start]
         head = 0
@@ -86,7 +89,7 @@ def crawl_site(
         head += 1
         statistics.inc_discovered()
 
-        print(f"INFO: Fetching Bytes from {current_url}")
+        logger.info("Fetching bytes from %s", current_url)
         try:
             body = fetch_bytes(
                 client=client,
@@ -95,7 +98,7 @@ def crawl_site(
                 retries=retries,
             )
         except Exception as exc:
-            print(f"ERROR: failed to fetch {current_url} with error {exc}")
+            logger.error("Failed to fetch %s with error %s", current_url, exc)
             statistics.inc_failed()
             continue
 
@@ -105,7 +108,7 @@ def crawl_site(
         try:
             path = save_html(allowed_host, save_dir, current_url, body)
         except Exception as exc:
-            print(f"ERROR: failed to save html {current_url} with error {exc}")
+            logger.error("Failed to save html %s with error %s", current_url, exc)
             statistics.inc_failed()
             continue
 
@@ -115,7 +118,7 @@ def crawl_site(
         try:
             extracted_urls = extract_urls(seen_urls, body, current_url, allowed_host)
         except Exception as exc:
-            print(f"ERROR: failed to extract urls at {current_url} with error {exc}")
+            logger.error("Failed to extract urls at %s with error %s", current_url, exc)
             statistics.inc_failed()
             continue
 

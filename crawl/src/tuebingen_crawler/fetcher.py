@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from pathlib import Path
 from .urls import url_slug
 import httpx
 from http import HTTPStatus
+
+logger = logging.getLogger(__name__)
 
 def fetch_bytes(
     client: httpx.Client,
@@ -15,7 +18,7 @@ def fetch_bytes(
 ) -> bytes:
     for attempt in range(retries):
         if attempt > 0:
-            print(f"INFO: Retry attempt {attempt} ...")
+            logger.info("Retry attempt %d ...", attempt)
 
         try:
             response = client.get(url)
@@ -33,23 +36,23 @@ def fetch_bytes(
                 else:
                     delay = min((attempt + 1) * retry_delay, 30.0)
 
-                print(f"INFO: Rate limited. Waiting {delay}s")
+                logger.warning("Rate limited. Waiting %ss", delay)
                 time.sleep(delay)
                 continue
 
             if status < 200 or status >= 300:
-                print(f"ERROR: Bad status {status} for {url}")
+                logger.warning("Bad status %d for %s", status, url)
                 continue
-                
+
             content_type = response.headers.get("Content-Type", "")
             if "text/html" not in content_type:
-                print(f"INFO: Skipping non-html file {url}")
+                logger.info("Skipping non-html file %s", url)
                 continue
         
             return response.content
 
         except httpx.RequestError as exc:
-            print(f"ERROR: Failed to fetch {url} with error {exc}")
+            logger.warning("Failed to fetch %s with error %s", url, exc)
             delay = min((attempt + 1) * retry_delay, 30.0)
             time.sleep(delay)
             continue
