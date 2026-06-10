@@ -5,8 +5,8 @@ from .crawler import crawl, save_jsonl
 from .models import Config, CrawlSite
 
 def main() -> None:
-    tuepedia = CrawlSite()
-    wiki_tuebingen = CrawlSite(url="https://de.wikipedia.org/wiki/T%C3%BCbingen")
+    tuepedia = CrawlSite(url="https://www.tuepedia.de/", max_pages=1000)
+    wiki_tuebingen = CrawlSite(url="https://de.wikipedia.org/wiki/T%C3%BCbingen", max_pages=1000)
     config = Config(sites=[wiki_tuebingen, tuepedia])
     
     try:

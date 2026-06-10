@@ -6,6 +6,7 @@ import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from os import walk
 
 import msgpack
 
@@ -84,22 +85,36 @@ def add_document_to_index(
 def index(dir_path: str, index_path: str) -> None:
     directory = Path(dir_path)
     term_frequency_index: dict[Document, TermFrequency] = {}
+    
+    
+    folder_paths = sorted(folder_path for folder_path in directory.iterdir() if folder_path.is_dir())
+    number_of_folders = len(folder_paths) 
 
-    for file_path in sorted(directory.iterdir()):
-        if not is_html_file(file_path):
-            print(f"WARN: Skipped non-html file: {file_path}", flush=True)
-            continue
 
-        print(f"INFO: Indexing {file_path!r}", flush=True)
-        text = extract_text_from_html(file_path)
-        terms = tokenize(text)
-        snippet_length = len(terms) // 10
-        document = Document(
-            path=file_path,
-            length=len(terms),
-            text_snippet=" ".join(terms[:snippet_length]),
+    for i, folder_path in enumerate(folder_paths):
+        print(f"INFO: Indexing folder {i + 1}/{number_of_folders}: {folder_path}", flush=True)
+        
+        file_paths = sorted(
+            file_path
+            for file_path in folder_path.rglob("*")
+            if file_path.is_file()
         )
-        term_frequency_index[document] = compute_tf(terms)
+
+        for file_path in file_paths:
+            if not is_html_file(file_path):
+                print(f"WARN: Skipped non-html file: {file_path}", flush=True)
+                continue
+
+            print(f"INFO: Indexing {file_path}", flush=True)
+            text = extract_text_from_html(file_path)
+            terms = tokenize(text)
+            snippet_length = max(1, len(terms) // 10) if terms else 0
+            document = Document(
+                path=file_path,
+                length=len(terms),
+                text_snippet=" ".join(terms[:snippet_length]),
+            )
+            term_frequency_index[document] = compute_tf(terms)
 
     for document, tf in term_frequency_index.items():
         print(f"INFO: {document.path} has {len(tf)} unique tokens", flush=True)

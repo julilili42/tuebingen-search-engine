@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     index_parser = subparsers.add_parser("index")
-    index_parser.add_argument("-d", "--dir", default="../data/tuepedia/html")
+    index_parser.add_argument("-d", "--dir", default="../data2")
     index_parser.add_argument("-o", "--output", default="index.bin")
 
     search_parser = subparsers.add_parser("search")
