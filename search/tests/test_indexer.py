@@ -85,14 +85,17 @@ def test_build_search_index_empty():
 
 def test_index_writes_msgpack_file(tmp_path):
     html_dir = tmp_path / "html"
-    html_dir.mkdir()
-    (html_dir / "a.html").write_text(
+    site_a = html_dir / "site_a"
+    site_b = html_dir / "site_b"
+    site_a.mkdir(parents=True)
+    site_b.mkdir(parents=True)
+    (site_a / "a.html").write_text(
         "<html><body><p>apple banana apple</p></body></html>", encoding="utf-8"
     )
-    (html_dir / "b.html").write_text(
+    (site_b / "b.html").write_text(
         "<html><body><p>banana cherry</p></body></html>", encoding="utf-8"
     )
-    (html_dir / "skip.txt").write_text("not html", encoding="utf-8")
+    (site_a / "skip.txt").write_text("not html", encoding="utf-8")
     index_path = tmp_path / "index.bin"
 
     index(str(html_dir), str(index_path))
@@ -101,7 +104,7 @@ def test_index_writes_msgpack_file(tmp_path):
         data = msgpack.unpack(index_file, raw=False)
 
     paths = [entry[0] for entry in data["documents"]]
-    assert paths == [str(html_dir / "a.html"), str(html_dir / "b.html")]
+    assert paths == [str(site_a / "a.html"), str(site_b / "b.html")]
     assert set(data["inverted_index"]) == {"apple", "banana", "cherry"}
 
     # "banana" occurs in both documents, "cherry" only in the second
@@ -113,8 +116,9 @@ def test_index_writes_msgpack_file(tmp_path):
 
 def test_index_stores_document_length(tmp_path):
     html_dir = tmp_path / "html"
-    html_dir.mkdir()
-    (html_dir / "a.html").write_text(
+    site_dir = html_dir / "site"
+    site_dir.mkdir(parents=True)
+    (site_dir / "a.html").write_text(
         "<html><body><p>one two three four</p></body></html>", encoding="utf-8"
     )
     index_path = tmp_path / "index.bin"

@@ -7,7 +7,7 @@ from tuebingen_search.cli import build_parser
 def test_index_command_defaults():
     args = build_parser().parse_args(["index"])
     assert args.command == "index"
-    assert args.dir == "../data/tuepedia/html"
+    assert args.dir == "../data2"
     assert args.output == "index.bin"
 
 

@@ -14,9 +14,10 @@ PAGES = {
 @pytest.fixture
 def index_path(tmp_path):
     html_dir = tmp_path / "html"
-    html_dir.mkdir()
+    site_dir = html_dir / "site"
+    site_dir.mkdir(parents=True)
     for name, content in PAGES.items():
-        (html_dir / name).write_text(content, encoding="utf-8")
+        (site_dir / name).write_text(content, encoding="utf-8")
 
     path = tmp_path / "index.bin"
     index(str(html_dir), str(path))
