@@ -1,6 +1,6 @@
 target/
-search/index.bin
-search/index.json
+index.bin*
+results.txt
 /data
 /data2
 .DS_Store

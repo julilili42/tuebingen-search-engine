@@ -1,11 +1,20 @@
 [project]
 name = "tuebingen-search"
-version = "0.1.0"
-description = "Small search engine for TUEpedia HTML files"
+version = "0.2.0"
+description = "Search engine for English web content about Tübingen (BM25 + RM3 + LSA)"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.136.3",
     "msgpack>=1.1.0",
+    "nltk>=3.9",
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "scipy>=1.14",
+]
+
+[project.optional-dependencies]
+desktop = [
+    "pywebview>=5.0",
 ]
 
 [dependency-groups]
@@ -15,6 +24,7 @@ dev = [
 
 [project.scripts]
 tuebingen-search = "tuebingen_search.cli:main"
+tuebingen-desktop = "tuebingen_search.desktop:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tuebingen_search"]

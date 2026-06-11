@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -6,44 +5,71 @@ import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Tuple
-from .models import CrawlState, Statistics
-import hashlib
+
+from .models import CrawlState, PageRecord, Statistics
 
 logger = logging.getLogger(__name__)
 
-# creates unique state path, s.t. multiple hostnames can be distinguished
-def generate_state_path(save_dir: str, host: str, canonical_start_url: str) -> Path:
-    digest = hashlib.sha256(canonical_start_url.encode("utf-8")).hexdigest()[:12]
-    return Path(save_dir) / host / f"crawl_state-{digest}.json"
+STATE_FILE = "crawl_state.json"
+PAGES_FILE = "pages.jsonl"
 
-# saving of intermediate state
-def save_state(path: str | Path, state: CrawlState) -> None:
-    path = Path(path)
+
+def state_path(save_dir: str) -> Path:
+    return Path(save_dir) / STATE_FILE
+
+
+def pages_path(save_dir: str) -> Path:
+    return Path(save_dir) / PAGES_FILE
+
+
+def save_state(save_dir: str, state: CrawlState) -> None:
+    """Atomically persist the crawl state (write to tmp file, then rename)."""
+    path = state_path(save_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(json.dumps(asdict(state), indent=1), encoding="utf-8")
+    tmp_path.write_text(json.dumps(asdict(state)), encoding="utf-8")
     os.replace(tmp_path, path)
 
-# loading of intermediate state, to continue crawling process where it was stopped
-def load_state(path: str | Path) -> Tuple[CrawlState, bool]:
-    path = Path(path)
-    if not path.exists():
-        logger.info("No intermediate state found %s.", path)
-        return CrawlState(), False
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        state = CrawlState(
-            queue=data.get("queue", []),
-            head=data.get("head", 0),
-            seen=data.get("seen", {}),
-            index=data.get("index", {}),
-            statistics=Statistics(**data.get("statistics", {})),
-        )
-        logger.info("Intermediate state was loaded successfully.")
-        return state, True
-    except Exception as exc:
-        logger.error("Failed to load intermediate state %s.", exc)
-        raise
+def load_state(save_dir: str) -> CrawlState | None:
+    path = state_path(save_dir)
+    if not path.exists():
+        return None
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    state = CrawlState(
+        frontier=data.get("frontier", []),
+        next_seq=data.get("next_seq", 0),
+        seen=data.get("seen", []),
+        saved_urls=data.get("saved_urls", []),
+        host_pages=data.get("host_pages", {}),
+        statistics=Statistics(**data.get("statistics", {})),
+    )
+    logger.info(
+        "Resuming crawl: %d queued, %d seen, %d saved",
+        len(state.frontier), len(state.seen), len(state.saved_urls),
+    )
+    return state
+
+
+def append_page_record(save_dir: str, record: PageRecord) -> None:
+    """Append one stored page to pages.jsonl (the crawl's document catalog)."""
+    path = pages_path(save_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as pages_file:
+        pages_file.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+
+
+def load_page_records(save_dir: str) -> list[PageRecord]:
+    path = pages_path(save_dir)
+    if not path.exists():
+        return []
+
+    records = []
+    with path.open("r", encoding="utf-8") as pages_file:
+        for line in pages_file:
+            line = line.strip()
+            if line:
+                records.append(PageRecord(**json.loads(line)))
+    return records

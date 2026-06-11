@@ -1,41 +1,31 @@
-# search/tests/test_tokenizer.py
-from tuebingen_search.tokenizer import tokenize
+from tuebingen_search.tokenizer import analyze, stem, tokenize, tokenize_with_offsets
 
 
-def test_tokenize_splits_on_whitespace_and_lowercases():
-    assert tokenize("Hello World") == ["hello", "world"]
+def test_tokenize_lowercases_and_splits():
+    assert tokenize("Tübingen's Old Town, est. 1477!") == [
+        "tübingen", "old", "town", "est", "1477",
+    ]
 
 
-def test_tokenize_drops_single_character_tokens():
-    assert tokenize("a bc d ef") == ["bc", "ef"]
+def test_tokenize_drops_single_characters():
+    assert tokenize("a I x42") == ["x42"]
 
 
-def test_tokenize_skips_punctuation():
-    assert tokenize("hello, world! (test)") == ["hello", "world", "test"]
+def test_tokenize_with_offsets_matches_source():
+    text = "Visit the Castle"
+    tokens = tokenize_with_offsets(text)
+    assert [token for token, _, _ in tokens] == ["visit", "the", "castle"]
+    for token, start, end in tokens:
+        assert text[start:end].lower() == token
 
 
-def test_tokenize_keeps_numbers_as_tokens():
-    assert tokenize("im Jahr 1477 gegründet") == ["im", "jahr", "1477", "gegründet"]
+def test_stemming_conflates_word_forms():
+    assert stem("attractions") == stem("attraction")
+    assert stem("universities") == stem("university")
 
 
-def test_tokenize_splits_number_followed_by_letters():
-    # a token starting with a digit only consumes digits, the rest starts anew
-    assert tokenize("1477er") == ["1477", "er"]
-    assert tokenize("42abc") == ["42", "abc"]
-
-
-def test_tokenize_keeps_digits_inside_alphabetic_token():
-    assert tokenize("web2py") == ["web2py"]
-
-
-def test_tokenize_handles_umlauts():
-    assert tokenize("Tübingen Straße") == ["tübingen", "straße"]
-
-
-def test_tokenize_empty_and_whitespace_only():
-    assert tokenize("") == []
-    assert tokenize("   \n\t  ") == []
-
-
-def test_tokenize_punctuation_only():
-    assert tokenize("!?., - ()") == []
+def test_analyze_removes_stopwords_and_stems():
+    terms = analyze("The attractions of the university")
+    assert "the" not in terms
+    assert "of" not in terms
+    assert terms == [stem("attractions"), stem("university")]

@@ -1,159 +1,119 @@
+"""End-to-end crawl against a mocked HTTP transport."""
+
 import json
-from pathlib import Path
 
 import httpx
 import pytest
 
-from tuebingen_crawler.crawler import crawl_site, save_jsonl
-from tuebingen_crawler.models import CrawlSite, Statistics
+import tuebingen_crawler.crawler as crawler_module
+from tuebingen_crawler.crawler import crawl
+from tuebingen_crawler.models import CrawlConfig
 
-HTML_HEADERS = {"Content-Type": "text/html; charset=utf-8"}
+ENGLISH_PARAGRAPH = (
+    "<p>Tübingen is a university town in Germany. The old town of Tübingen "
+    "is known for its narrow alleys and the castle above the river. Many "
+    "people visit Tübingen for the market square and the botanical garden "
+    "that has been part of the university for a very long time.</p>"
+)
+
+GERMAN_PARAGRAPH = (
+    "<p>Tübingen ist eine Universitätsstadt in Deutschland. Die Altstadt von "
+    "Tübingen ist bekannt für ihre engen Gassen und das Schloss über dem "
+    "Fluss, das man von vielen Orten der Stadt aus sehen kann und das von "
+    "den Studierenden der Universität gerne besucht wird.</p>"
+)
 
 PAGES = {
-    "/": b'<a href="/a">A</a><a href="/b">B</a><a href="https://example.com/x">ext</a>',
-    "/a": b'<a href="/b">B</a><a href="/c">C</a>',
-    "/b": b"<html>leaf</html>",
-    "/c": b"<html>leaf</html>",
+    "https://site-a.test/": (
+        f"<html lang='en'><head><title>Tübingen Guide</title></head><body>"
+        f"{ENGLISH_PARAGRAPH}"
+        f"<a href='/english'>english page</a>"
+        f"<a href='/german'>german page</a>"
+        f"<a href='/offtopic'>other</a>"
+        f"<a href='https://blocked.test/page'>blocked</a></body></html>"
+    ),
+    "https://site-a.test/english": (
+        f"<html lang='en'><head><title>Old town of Tübingen</title></head>"
+        f"<body>{ENGLISH_PARAGRAPH}</body></html>"
+    ),
+    "https://site-a.test/german": (
+        f"<html lang='de'><head><title>Altstadt Tübingen</title></head>"
+        f"<body>{GERMAN_PARAGRAPH}</body></html>"
+    ),
+    "https://site-a.test/offtopic": (
+        "<html lang='en'><head><title>Generic travel news</title></head><body>"
+        "<p>This page is about travelling in general. It talks about the best "
+        "ways to pack a bag for a longer trip and how to find cheap tickets "
+        "for trains in Europe during the busy summer season.</p></body></html>"
+    ),
 }
 
 
-@pytest.fixture
-def requested_paths():
-    return []
-
-
-def make_client(pages, requested_paths) -> httpx.Client:
-    def handler(request):
-        requested_paths.append(request.url.path)
-        body = pages.get(request.url.path)
-        if body is None:
-            return httpx.Response(404, headers=HTML_HEADERS)
-        return httpx.Response(200, headers=HTML_HEADERS, content=body)
-
-    return httpx.Client(transport=httpx.MockTransport(handler))
+def handler(request: httpx.Request) -> httpx.Response:
+    url = str(request.url)
+    if url.endswith("/robots.txt"):
+        return httpx.Response(404)
+    if url in PAGES:
+        return httpx.Response(
+            200, content=PAGES[url].encode(), headers={"Content-Type": "text/html"}
+        )
+    return httpx.Response(404)
 
 
 @pytest.fixture
-def client(requested_paths):
-    with make_client(PAGES, requested_paths) as client:
-        yield client
+def mock_http(monkeypatch):
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
+
+    def client_factory(**kwargs):
+        kwargs.pop("transport", None)
+        return real_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(crawler_module.httpx, "Client", client_factory)
 
 
-def make_site(**overrides) -> CrawlSite:
+def make_config(tmp_path, **overrides) -> CrawlConfig:
     defaults = dict(
-        url="https://host/",
-        max_pages=100,
-        request_timeout=1.0,
-        retry_delay=0.0,
-        request_delay=0.0,
-        retries=1,
+        seeds=["https://site-a.test/"],
+        save_dir=str(tmp_path / "crawl"),
+        max_pages=10,
+        host_delay=0.0,
+        save_state_every=1,
     )
     defaults.update(overrides)
-    return CrawlSite(**defaults)
+    return CrawlConfig(**defaults)
 
 
-def run_crawl(client, tmp_path, statistics=None, **site_overrides):
-    return crawl_site(
-        client=client,
-        site=make_site(**site_overrides),
-        seen_urls={},
-        save_dir=str(tmp_path),
-        save_state_every=10,
-        statistics=statistics or Statistics(),
-    )
-
-
-def test_crawl_site_visits_all_reachable_pages(client, tmp_path, requested_paths):
-    index = run_crawl(client, tmp_path)
-
-    assert sorted(index) == [
-        "https://host/",
-        "https://host/a",
-        "https://host/b",
-        "https://host/c",
-    ]
-    # every page is fetched exactly once
-    assert sorted(requested_paths) == ["/", "/a", "/b", "/c"]
-
-
-def test_crawl_site_saves_html_files(client, tmp_path):
-    index = run_crawl(client, tmp_path)
-
-    for url, path in index.items():
-        saved = Path(path)
-        assert saved.exists()
-        assert saved.read_bytes() == PAGES[httpx.URL(url).path]
-
-
-def test_crawl_site_respects_max_pages(client, tmp_path, requested_paths):
-    index = run_crawl(client, tmp_path, max_pages=2)
-
-    assert len(index) == 2
-    assert len(requested_paths) == 2
-
-
-def test_crawl_site_updates_statistics(client, tmp_path):
-    statistics = Statistics()
-    run_crawl(client, tmp_path, statistics=statistics)
-
-    assert statistics.fetched == 4
-    assert statistics.saved == 4
-    assert statistics.discovered == 4
-    assert statistics.failed == 0
-
-
-def test_crawl_site_counts_failed_fetches(tmp_path, requested_paths):
-    # /missing returns 404 and exhausts its single retry
-    pages = {
-        "/": b'<a href="/a">A</a><a href="/missing">dead</a>',
-        "/a": b"<html>leaf</html>",
+def saved_urls(tmp_path) -> set[str]:
+    pages_file = tmp_path / "crawl" / "pages.jsonl"
+    if not pages_file.exists():
+        return set()
+    return {
+        json.loads(line)["url"]
+        for line in pages_file.read_text().splitlines()
+        if line.strip()
     }
-    statistics = Statistics()
-
-    with make_client(pages, requested_paths) as client:
-        index = run_crawl(client, tmp_path, statistics=statistics)
-
-    assert "https://host/missing" not in index
-    assert sorted(index) == ["https://host/", "https://host/a"]
-    assert statistics.failed == 1
-    assert statistics.saved == 2
 
 
-def test_crawl_site_resumes_completed_state_without_fetching(client, tmp_path, requested_paths):
-    first_index = run_crawl(client, tmp_path)
-    fetches_first_run = len(requested_paths)
+def test_crawl_stores_only_relevant_english_pages(tmp_path, mock_http):
+    statistics = crawl(make_config(tmp_path))
 
-    second_index = run_crawl(client, tmp_path)
-
-    assert second_index == first_index
-    # state was complete, so the second run performs no requests
-    assert len(requested_paths) == fetches_first_run
+    urls = saved_urls(tmp_path)
+    assert urls == {"https://site-a.test/", "https://site-a.test/english"}
+    assert statistics.skipped_language == 1  # the German page
+    assert statistics.skipped_relevance == 1  # the off-topic page
 
 
-def test_crawl_site_rejects_invalid_starting_url(client, tmp_path):
-    with pytest.raises(ValueError):
-        run_crawl(client, tmp_path, url="ftp://host/")
+def test_crawl_is_resumable(tmp_path, mock_http):
+    # First run stores only the seed page.
+    crawl(make_config(tmp_path, max_pages=1))
+    assert saved_urls(tmp_path) == {"https://site-a.test/"}
+
+    # Second run picks up the frontier and finds the remaining page.
+    crawl(make_config(tmp_path, max_pages=10))
+    assert "https://site-a.test/english" in saved_urls(tmp_path)
 
 
-def test_save_jsonl_writes_one_row_per_page(tmp_path):
-    index = {
-        "https://host/": {
-            "https://host/": "/data/host/index.html",
-            "https://host/a": "/data/host/a.html",
-        },
-        "https://other/": {
-            "https://other/x": "/data/other/x.html",
-        },
-    }
-    out = tmp_path / "out" / "index.jsonl"
-
-    save_jsonl(out, index)
-
-    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 3
-    assert rows[0] == {
-        "site": "https://host/",
-        "url": "https://host/",
-        "path": "/data/host/index.html",
-    }
-    assert {row["site"] for row in rows} == {"https://host/", "https://other/"}
+def test_crawl_respects_max_pages_per_host(tmp_path, mock_http):
+    crawl(make_config(tmp_path, max_pages_per_host=1))
+    assert len(saved_urls(tmp_path)) == 1

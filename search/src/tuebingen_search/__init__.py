@@ -1,15 +1,18 @@
-"""Python port of the TUEpedia search engine."""
+"""Search engine for English web content about Tübingen.
 
-from .indexer import Document, Posting, SearchIndex, index
-from .search import SearchResult, search
-from .tokenizer import tokenize
+Two-stage retrieval: self-implemented BM25 with RM3 pseudo-relevance
+feedback, re-ranked with corpus-trained LSA embeddings and MMR.
+"""
+
+from .batch import batch
+from .indexer import index
+from .search import RetrievalResponse, SearchEngine, SearchResult, retrieve
 
 __all__ = [
-    "Document",
-    "Posting",
-    "SearchIndex",
+    "RetrievalResponse",
+    "SearchEngine",
     "SearchResult",
+    "batch",
     "index",
-    "search",
-    "tokenize",
+    "retrieve",
 ]

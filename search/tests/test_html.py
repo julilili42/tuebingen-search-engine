@@ -1,70 +1,39 @@
-# search/tests/test_html.py
-from pathlib import Path
-
-from tuebingen_search.html import TextExtractor, extract_text_from_html, is_html_file
+from tuebingen_search.html import extract_page, is_html_file
 
 
-def extract(html: str) -> str:
-    parser = TextExtractor()
-    parser.feed(html)
-    return parser.text
+def write_html(tmp_path, body: str):
+    path = tmp_path / "page.html"
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
-def test_extracts_text_from_selected_tags():
-    html = "<html><body><h1>Title</h1><p>Some paragraph.</p></body></html>"
-    assert extract(html).split() == ["Title", "Some", "paragraph."]
+def test_extract_page_title_and_text(tmp_path):
+    path = write_html(
+        tmp_path,
+        "<html><head><title>Market Square</title></head>"
+        "<body><h1>Market</h1><p>Weekly market on the square.</p></body></html>",
+    )
+    page = extract_page(path)
+    assert page.title == "Market Square"
+    assert "Weekly market" in page.text
+    assert "Market" in page.text
 
 
-def test_ignores_text_outside_body():
-    html = "<html><head><title>Ignored</title></head><body><p>Kept</p></body></html>"
-    assert extract(html).split() == ["Kept"]
-
-
-def test_ignores_text_in_unselected_tags():
-    html = "<body><div>skipped</div><p>kept</p><script>var x = 1;</script></body>"
-    assert extract(html).split() == ["kept"]
-
-
-def test_extracts_nested_selected_tags():
-    html = "<body><li><p>inner</p> outer</li></body>"
-    assert extract(html).split() == ["inner", "outer"]
-
-
-def test_normalizes_whitespace():
-    html = "<body><p>  several\n   spaced \t words  </p></body>"
-    assert extract(html).split() == ["several", "spaced", "words"]
-
-
-def test_converts_character_references():
-    html = "<body><p>T&uuml;bingen &amp; Umgebung</p></body>"
-    assert extract(html).split() == ["Tübingen", "&", "Umgebung"]
-
-
-def test_table_and_caption_tags_are_selected():
-    html = "<body><table><tr><th>Head</th><td>Cell</td></tr></table><figcaption>Cap</figcaption></body>"
-    assert extract(html).split() == ["Head", "Cell", "Cap"]
+def test_extract_page_skips_non_content_tags(tmp_path):
+    path = write_html(
+        tmp_path,
+        "<html><body><nav>navigation junk</nav><script>var x;</script>"
+        "<p>real content</p></body></html>",
+    )
+    page = extract_page(path)
+    assert "navigation junk" not in page.text
+    assert "var x" not in page.text
+    assert page.text == "real content"
 
 
 def test_is_html_file(tmp_path):
-    html_file = tmp_path / "page.html"
-    html_file.write_text("<html></html>")
-    upper_file = tmp_path / "page.HTML"
-    upper_file.write_text("<html></html>")
-    text_file = tmp_path / "notes.txt"
-    text_file.write_text("text")
-
-    assert is_html_file(html_file)
-    assert is_html_file(upper_file)
-    assert not is_html_file(text_file)
-    assert not is_html_file(tmp_path)  # directory
-    assert not is_html_file(Path(tmp_path / "missing.html"))
-
-
-def test_extract_text_from_html_reads_file(tmp_path):
-    file_path = tmp_path / "page.html"
-    file_path.write_text(
-        "<html><body><h1>Tübingen</h1><p>Eine Stadt am Neckar.</p></body></html>",
-        encoding="utf-8",
-    )
-    text = extract_text_from_html(file_path)
-    assert text.split() == ["Tübingen", "Eine", "Stadt", "am", "Neckar."]
+    html = write_html(tmp_path, "<p>hi</p>")
+    text = tmp_path / "notes.txt"
+    text.write_text("hi")
+    assert is_html_file(html)
+    assert not is_html_file(text)

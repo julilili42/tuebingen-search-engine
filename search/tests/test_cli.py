@@ -1,35 +1,34 @@
-# search/tests/test_cli.py
 import pytest
 
-from tuebingen_search.cli import build_parser
+from tuebingen_search.cli import _highlight, build_parser
 
 
-def test_index_command_defaults():
+def test_parser_index_defaults():
     args = build_parser().parse_args(["index"])
-    assert args.command == "index"
-    assert args.dir == "../data2"
+    assert args.dir == "data/crawl"
     assert args.output == "index.bin"
 
 
-def test_index_command_custom_arguments():
-    args = build_parser().parse_args(["index", "-d", "/tmp/html", "-o", "/tmp/out.bin"])
-    assert args.dir == "/tmp/html"
-    assert args.output == "/tmp/out.bin"
+def test_parser_search_flags():
+    args = build_parser().parse_args(
+        ["search", "-q", "castle", "-t", "5", "--no-rm3"]
+    )
+    assert args.query == "castle"
+    assert args.top_n == 5
+    assert args.no_rm3
+    assert not args.no_semantic
 
 
-def test_search_command_requires_query():
+def test_parser_batch_requires_queries():
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["search"])
+        build_parser().parse_args(["batch"])
+
+    args = build_parser().parse_args(["batch", "-q", "queries.txt", "-o", "out.txt"])
+    assert args.queries == "queries.txt"
+    assert args.output == "out.txt"
 
 
-def test_search_command_defaults():
-    args = build_parser().parse_args(["search", "-q", "tübingen"])
-    assert args.command == "search"
-    assert args.index == "index.bin"
-    assert args.query == "tübingen"
-    assert args.top_n == 10
-
-
-def test_command_is_required():
-    with pytest.raises(SystemExit):
-        build_parser().parse_args([])
+def test_highlight_wraps_ranges_in_ansi_codes():
+    highlighted = _highlight("the castle stands", [(4, 10)])
+    assert "\033[1;33mcastle\033[0m" in highlighted
+    assert highlighted.startswith("the ")
