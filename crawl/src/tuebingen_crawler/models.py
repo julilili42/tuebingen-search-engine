@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import field, dataclass
 from typing import List, Dict
 from pydantic import BaseModel, ConfigDict
+from pathlib import Path
 
 # since we read from json, we need to validate the input
 class CrawlSite(BaseModel):
@@ -21,7 +22,7 @@ class Config:
     sites: List[CrawlSite] = field(default_factory=list)
     accept: str = "text/html"
     user_agent: str = "SimpleLinkCrawler/0.1"
-    save_dir: str = "../data2"
+    save_dir: Path = field(default_factory=lambda: Path("data"))
     save_state_every: int = 10
 
 

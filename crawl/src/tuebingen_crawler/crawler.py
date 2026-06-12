@@ -4,28 +4,60 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 from .models import Statistics, CrawlState, Config, CrawlSite
 from .storage import save_state, load_state, generate_state_path
 from .urls import canonical_url, extract_urls, hostname_for_url
 from .fetcher import fetch_bytes, save_html
+from urllib.parse import urlparse
 import httpx
+from urllib.robotparser import RobotFileParser
 
 logger = logging.getLogger(__name__)
 
-def crawl(config: Config) -> Dict[str, Dict[str, str]]:
-    index: Dict[str, Dict[str, str]] = {}
+# before we crawl a url we have to load the `robots.txt` file
+def load_robots(client: httpx.Client, site: CrawlSite) -> RobotFileParser:
+    parsed = urlparse(site.url)
 
-    sites = config.sites
-    save_dir = config.save_dir
-    save_state_every = config.save_state_every
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Invalid site URL: {site.url}")
+    
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+    parser = RobotFileParser()
+    parser.set_url(robots_url)
+
+    try:
+        response = client.get(robots_url, timeout=5.0, follow_redirects=True)
+        if response.status_code == 404:
+                parser.parse([])
+                return parser
+
+        response.raise_for_status()
+        parser.parse(response.text.splitlines())
+        return parser
+
+    except httpx.RequestError as exc:
+        logger.warning("Could not fetch robots.txt for %s: %s", site.url, exc)
+        parser.parse([])
+        return parser
+
+def crawl_hostname(config: Config) -> Dict[str, Dict[str, str]]:
+    index: Dict[str, Dict[str, str]] = {}
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
 
-    for site in sites:
+    for site in config.sites:
         with httpx.Client(timeout=site.request_timeout, headers=headers) as client:            
+            robot_parser = load_robots(client, site)
+
+            # skips urls which categorically disallow crawling
+            if not robot_parser.can_fetch(config.user_agent, site.url):
+                logger.warning("Skipping %s because robots.txt disallows it", site.url)
+                continue
+
             seen_urls: Dict[str, bool] = {}
             statistics = Statistics()
-            site_index = crawl_site(client, site, seen_urls, save_dir, save_state_every, statistics)
+            site_index = crawl_site(client, site, seen_urls, config.save_dir, config.save_state_every, statistics, robot_parser, config.user_agent)
             index[site.url] = site_index 
 
             statistics.print()
@@ -37,16 +69,13 @@ def crawl_site(
     client: httpx.Client,
     site: CrawlSite,
     seen_urls: Dict[str, bool],
-    save_dir: str, 
+    save_dir: Path, 
     save_state_every: int,
     statistics: Statistics,
+    robot_parser: RobotFileParser,
+    user_agent: str
 ) -> Dict[str, str]:
-    
     starting_url = site.url
-    max_pages = site.max_pages
-    retry_delay = site.retry_delay
-    retries = site.retries
-    request_delay = site.request_delay
 
     # restricts crawler to stay on hostname it started on
     allowed_host = hostname_for_url(starting_url)
@@ -55,10 +84,9 @@ def crawl_site(
     if not is_canonical:
         raise ValueError(f"ERROR: starting url {starting_url} is not canonical")
 
-    # generates path to save intermediate state
-    state_path = generate_state_path(save_dir, allowed_host, canonical_start)
 
-    # allows continuation of intermediate state
+
+    state_path = generate_state_path(save_dir, allowed_host, canonical_start)
     state, loaded = load_state(state_path)
 
     if loaded:
@@ -81,21 +109,29 @@ def crawl_site(
         seen_urls[canonical_start] = True
         site_index: Dict[str, str] = {}
 
+
+
+
     while head < len(queue):
-        if max_pages >= 0 and len(site_index) >= max_pages:
+        if site.max_pages >= 0 and len(site_index) >= site.max_pages:
             break
 
         current_url = queue[head]
         head += 1
         statistics.inc_discovered()
 
+        if not robot_parser.can_fetch(user_agent, current_url):
+            logger.info("Skipping disallowed URL: %s", current_url)
+            statistics.inc_failed()
+            continue
+
         logger.info("Fetching bytes from %s", current_url)
         try:
             body = fetch_bytes(
                 client=client,
                 url=current_url,
-                retry_delay=retry_delay,
-                retries=retries,
+                retry_delay=site.retry_delay,
+                retries=site.retries,
             )
         except Exception as exc:
             logger.error("Failed to fetch %s with error %s", current_url, exc)
@@ -103,7 +139,7 @@ def crawl_site(
             continue
 
         statistics.inc_fetched()
-        time.sleep(request_delay)
+        time.sleep(site.request_delay)
 
         try:
             path = save_html(allowed_host, save_dir, current_url, body)
@@ -123,30 +159,47 @@ def crawl_site(
             continue
 
         queue.extend(extracted_urls)
+        maybe_save_progress(save_state_every, state_path, queue, head, seen_urls, site_index, statistics)
 
-        if head % save_state_every == 0:
-            save_state(
-                state_path,
-                CrawlState(
-                    queue=queue,
-                    head=head,
-                    seen=seen_urls,
-                    index=site_index,
-                    statistics=statistics,
-                ),
-            )
-    
-    save_state(
-                state_path,
-                CrawlState(
-                    queue=queue,
-                    head=head,
-                    seen=seen_urls,
-                    index=site_index,
-                    statistics=statistics,
-                ),
-            )
+    save_progress(state_path, queue, head, seen_urls, site_index, statistics)
     return site_index
+
+def save_progress(
+    state_path: str,
+    queue: List[str], 
+    head: int, 
+    seen_urls: Dict[str, bool],
+    site_index: Dict[str, str],
+    statistics: Statistics,
+) -> None:
+    save_state(
+        state_path,
+        CrawlState(
+            queue=queue,
+            head=head,
+            seen=seen_urls,
+            index=site_index,
+            statistics=statistics,
+        ),
+    )
+
+def maybe_save_progress(
+    save_state_every: int,
+    state_path: str,
+    queue: List[str], 
+    head: int, 
+    seen_urls: Dict[str, bool],
+    site_index: Dict[str, str],
+    statistics: Statistics,
+) -> None:
+    if save_state_every <= 0:
+        return
+
+    if head % save_state_every == 0:
+        save_progress(state_path, queue, head, seen_urls, site_index, statistics)
+
+
+
 
 # saves page summary of all crawled pages
 def save_jsonl(path: str | Path, index: Dict[str, Dict[str, str]]) -> None:

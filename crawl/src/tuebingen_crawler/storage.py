@@ -24,6 +24,7 @@ def load_seed_toml(path: Path) -> List[CrawlSite]:
         return entries
     except ValidationError as exc:
         logger.error("Invalid TOML seed entries: %s", exc)
+        return []
     except KeyError:
         logger.error("TOML seed list must contain a 'sites' field")
         return []
@@ -34,11 +35,10 @@ def load_seed_toml(path: Path) -> List[CrawlSite]:
         logger.error("TOML seed list not found")
         return []
 
-
 # creates unique state path, s.t. multiple hostnames can be distinguished
-def generate_state_path(save_dir: str, host: str, canonical_start_url: str) -> Path:
+def generate_state_path(save_dir: Path, host: str, canonical_start_url: str) -> Path:
     digest = hashlib.sha256(canonical_start_url.encode("utf-8")).hexdigest()[:12]
-    return Path(save_dir) / host / f"crawl_state-{digest}.json"
+    return save_dir / host / f"crawl_state-{digest}.json"
 
 # saving of intermediate state
 def save_state(path: str | Path, state: CrawlState) -> None:

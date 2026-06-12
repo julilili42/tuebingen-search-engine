@@ -60,11 +60,11 @@ def fetch_bytes(
     raise RuntimeError(f"ERROR: Failed to fetch {url} after {retries} retries")
 
 
-def save_html(hostname: str, base_dir: str, page_url: str, body: bytes) -> str:
+def save_html(hostname: str, base_dir: Path, page_url: str, body: bytes) -> str:
     digest = hashlib.sha256(page_url.encode("utf-8")).hexdigest()[:8]
     file_name = f"{digest}-{url_slug(page_url)}.html"
 
-    directory = Path(base_dir) / hostname
+    directory = base_dir / hostname
     directory.mkdir(parents=True, exist_ok=True)
 
     path = directory / file_name
