@@ -15,7 +15,7 @@ The URLs to crawl are defined in `crawl/seeds.toml` (one `[[sites]]` entry per s
 ### 2. Build the index
 
 ```bash
-uv run tuebingen-search index -d ../data2 -o index.bin
+uv run tuebingen-search index -d ../data -o index.bin
 ```
 
 `-d` directory with the crawled sites, `-o` output path for the index.

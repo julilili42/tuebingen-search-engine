@@ -9,6 +9,7 @@ from .tokenizer import tokenize
 from .models import Document, TermFrequency, SearchIndex, Posting
 from .scoring import compute_idf, compute_tf_idf, compute_tf
 from .storage import save_index
+from .load_pages import PageLoad
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,16 @@ def add_document_to_index(
         inverted_index[term].append(Posting(doc_index=doc_index, score=score))
 
 
-def index(dir_path: Path, index_path: Path) -> None:
+def index(dir_path: Path, index_path: Path, pages_db: PageLoad) -> None:
     term_frequency_index: dict[Document, TermFrequency] = {}
     
     
     folder_paths = sorted(folder_path for folder_path in dir_path.iterdir() if folder_path.is_dir())
     number_of_folders = len(folder_paths) 
+
+    # TODO
+    # remove file directory/file walk by iterating over db records
+    # records = list(pages_db.iter_html_pages())
 
     # computes term frequency for each html-file in each hostname folder
     for i, folder_path in enumerate(folder_paths):
@@ -65,8 +70,15 @@ def index(dir_path: Path, index_path: Path) -> None:
             logger.debug("Indexing %s", file_path)
             text = extract_text_from_html(file_path)
             terms = tokenize(text)
+            
+
+            # extract url from SQLite database, uses file_path for the search 
+            entry = pages_db.get_page_by_file_path(file_path)
+            url = entry.url if entry else None
+
             document = Document(
                 path=file_path,
+                url=url,
                 length=len(terms),
                 text_snippet=" ".join(terms[:SNIPPET_MAX_TERMS]),
             )

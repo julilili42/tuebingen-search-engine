@@ -6,7 +6,7 @@ import pytest
 
 from tuebingen_crawler.crawler import crawl_site
 from tuebingen_crawler.models import CrawlSite
-from tuebingen_crawler.page_store import PageStore
+from tuebingen_crawler.save_pages import PageStore
 
 HTML_HEADERS = {"Content-Type": "text/html; charset=utf-8"}
 

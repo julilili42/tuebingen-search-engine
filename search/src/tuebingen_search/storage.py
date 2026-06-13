@@ -14,7 +14,7 @@ def save_index(index_path: Path, search_index: SearchIndex) -> None:
 def _to_msgpack(search_index: SearchIndex) -> dict[str, object]:
     return {
         "documents": [
-            [str(document.path), document.length, document.text_snippet]
+            [str(document.path), document.url, document.length, document.text_snippet]
             for document in search_index.documents
         ],
         "inverted_index": {
@@ -30,8 +30,8 @@ def load_index(index_path: str) -> SearchIndex:
 
     index = SearchIndex(
     documents=[
-            Document(path=Path(path), length=length, text_snippet=snippet)
-            for path, length, snippet in raw["documents"]
+            Document(path=Path(path), url=url, length=length, text_snippet=snippet)
+            for path, url, length, snippet in raw["documents"]
             ],
     inverted_index={
             term: [Posting(doc_index, score) for doc_index, score in postings]

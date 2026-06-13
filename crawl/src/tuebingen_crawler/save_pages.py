@@ -20,19 +20,19 @@ class PageRecord:
 
 # used to store informations (`PageRecord`) about crawled pages in sqlite database
 class PageStore:
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
-        self.conn.row_factory = sqlite3.Row
+        self.con = sqlite3.connect(self.db_path)
+        self.con.row_factory = sqlite3.Row
 
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA foreign_keys=ON")
+        self.con.execute("PRAGMA journal_mode=WAL")
+        self.con.execute("PRAGMA foreign_keys=ON")
 
         self.init_schema()
 
     def close(self) -> None:
-        self.conn.close()
+        self.con.close()
 
     def __enter__(self) -> "PageStore":
         return self
@@ -41,7 +41,7 @@ class PageStore:
         self.close()
 
     def init_schema(self) -> None:
-        self.conn.execute(
+        self.con.execute(
             """
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY,
@@ -59,21 +59,21 @@ class PageStore:
             """
         )
 
-        self.conn.execute(
+        self.con.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_pages_host
             ON pages(host)
             """
         )
 
-        self.conn.execute(
+        self.con.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_pages_path
             ON pages(path)
             """
         )
 
-        self.conn.commit()
+        self.con.commit()
 
     def upsert_page(
         self,
@@ -89,8 +89,8 @@ class PageStore:
         now = self._now()
         fetched_at = fetched_at or now
 
-        with self.conn:
-            self.conn.execute(
+        with self.con:
+            self.con.execute(
                 """
                 INSERT INTO pages (
                     url,
@@ -130,8 +130,8 @@ class PageStore:
     def mark_indexed(self, url: str) -> None:
         now = self._now()
 
-        with self.conn:
-            self.conn.execute(
+        with self.con:
+            self.con.execute(
                 """
                 UPDATE pages
                 SET indexed_at = ?, updated_at = ?
@@ -141,7 +141,7 @@ class PageStore:
             )
 
     def get_page_by_url(self, url: str) -> PageRecord | None:
-        row = self.conn.execute(
+        row = self.con.execute(
             """
             SELECT url, host, path, status_code, content_type,
                    content_hash, fetched_at, indexed_at
@@ -157,7 +157,7 @@ class PageStore:
         return self._row_to_page(row)
 
     def iter_pages(self) -> Iterator[PageRecord]:
-        rows = self.conn.execute(
+        rows = self.con.execute(
             """
             SELECT url, host, path, status_code, content_type,
                    content_hash, fetched_at, indexed_at
@@ -170,7 +170,7 @@ class PageStore:
             yield self._row_to_page(row)
 
     def iter_html_pages(self) -> Iterator[PageRecord]:
-        rows = self.conn.execute(
+        rows = self.con.execute(
             """
             SELECT url, host, path, status_code, content_type,
                    content_hash, fetched_at, indexed_at

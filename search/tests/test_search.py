@@ -1,7 +1,10 @@
 # search/tests/test_search.py
+import sqlite3
+
 import pytest
 
 from tuebingen_search.indexer import index
+from tuebingen_search.load_pages import PageLoad
 from tuebingen_search.search import search
 
 PAGES = {
@@ -9,6 +12,17 @@ PAGES = {
     "banana.html": "<html><body><p>banana banana cherry</p></body></html>",
     "cherry.html": "<html><body><p>cherry orange</p></body></html>",
 }
+
+
+def empty_page_load(db_path):
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE pages (url TEXT, host TEXT, path TEXT, status_code INTEGER, "
+        "content_type TEXT, content_hash TEXT, fetched_at TEXT, indexed_at TEXT)"
+    )
+    con.commit()
+    con.close()
+    return PageLoad(db_path)
 
 
 @pytest.fixture
@@ -20,7 +34,7 @@ def index_path(tmp_path):
         (site_dir / name).write_text(content, encoding="utf-8")
 
     path = tmp_path / "index.bin"
-    index(str(html_dir), str(path))
+    index(html_dir, str(path), empty_page_load(tmp_path / "pages.sqlite"))
     return str(path)
 
 
@@ -29,7 +43,7 @@ def test_search_ranks_by_term_frequency(index_path):
 
     assert len(results) == 1
     assert results[0].rank == 1
-    assert results[0].path.endswith("apple.html")
+    assert str(results[0].path).endswith("apple.html")
     assert results[0].score > 0
 
 
@@ -38,15 +52,15 @@ def test_search_returns_all_matching_documents_ranked(index_path):
 
     assert [r.rank for r in results] == [1, 2]
     # banana.html mentions banana twice, apple.html once
-    assert results[0].path.endswith("banana.html")
-    assert results[1].path.endswith("apple.html")
+    assert str(results[0].path).endswith("banana.html")
+    assert str(results[1].path).endswith("apple.html")
     assert results[0].score > results[1].score
 
 
 def test_search_accumulates_scores_over_query_terms(index_path):
     results = search(index_path, "banana cherry", top_n=10)
 
-    paths = [r.path for r in results]
+    paths = [str(r.path) for r in results]
     assert len(results) == 3
     # banana.html matches both terms and ranks first
     assert paths[0].endswith("banana.html")

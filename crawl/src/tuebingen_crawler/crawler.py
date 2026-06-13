@@ -8,7 +8,7 @@ from .models import Statistics, CrawlState, Config, CrawlSite
 from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state
 from .urls import canonical_url, extract_urls, hostname_for_url
 from .fetcher import fetch_bytes, save_html
-from .page_store import PageStore
+from .save_pages import PageStore
 import httpx
 from urllib.robotparser import RobotFileParser
 

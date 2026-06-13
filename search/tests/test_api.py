@@ -1,15 +1,29 @@
 # search/tests/test_api.py
+import sqlite3
+
 import pytest
 from fastapi.testclient import TestClient
 
 from tuebingen_search.api import app
 from tuebingen_search.indexer import index
+from tuebingen_search.load_pages import PageLoad
 
 PAGES = {
     "apple.html": "<html><body><p>apple apple apple banana</p></body></html>",
     "banana.html": "<html><body><p>banana banana cherry</p></body></html>",
     "cherry.html": "<html><body><p>cherry orange</p></body></html>",
 }
+
+
+def empty_page_load(db_path):
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE pages (url TEXT, host TEXT, path TEXT, status_code INTEGER, "
+        "content_type TEXT, content_hash TEXT, fetched_at TEXT, indexed_at TEXT)"
+    )
+    con.commit()
+    con.close()
+    return PageLoad(db_path)
 
 
 @pytest.fixture
@@ -20,7 +34,7 @@ def client(tmp_path, monkeypatch):
         (site_dir / name).write_text(content, encoding="utf-8")
 
     index_path = tmp_path / "index.bin"
-    index(str(tmp_path / "html"), str(index_path))
+    index(tmp_path / "html", str(index_path), empty_page_load(tmp_path / "pages.sqlite"))
 
     monkeypatch.setenv("INDEX_PATH", str(index_path))
     with TestClient(app) as client:

@@ -1,4 +1,6 @@
 # search/tests/test_cli.py
+from pathlib import Path
+
 import pytest
 
 from tuebingen_search.cli import build_parser
@@ -7,8 +9,9 @@ from tuebingen_search.cli import build_parser
 def test_index_command_defaults():
     args = build_parser().parse_args(["index"])
     assert args.command == "index"
-    assert args.dir == "../data2"
-    assert args.output == "index.bin"
+    assert Path(args.dir).name == "data"
+    assert Path(args.output).name == "index.bin"
+    assert Path(args.db).name == "pages.sqlite"
 
 
 def test_index_command_custom_arguments():
@@ -25,7 +28,7 @@ def test_search_command_requires_query():
 def test_search_command_defaults():
     args = build_parser().parse_args(["search", "-q", "tübingen"])
     assert args.command == "search"
-    assert args.index == "index.bin"
+    assert Path(args.index).name == "index.bin"
     assert args.query == "tübingen"
     assert args.top_n == 10
 

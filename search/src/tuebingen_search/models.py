@@ -12,6 +12,7 @@ class Posting:
 @dataclass(frozen=True)
 class Document:
     path: Path
+    url: str | None
     length: int
     text_snippet: str
 
@@ -26,6 +27,7 @@ class SearchIndex:
 class SearchResult:
     rank: int
     score: float
-    path: str
+    path: Path
+    url: str | None
     snippet: str
 

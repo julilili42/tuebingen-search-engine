@@ -1,24 +1,30 @@
 # search/tests/test_indexer.py
 import math
+import sqlite3
 from pathlib import Path
 
 import msgpack
 import pytest
 
-from tuebingen_search.indexer import (
-    SNIPPET_MAX_TERMS,
-    Document,
-    build_search_index,
-    compute_df,
-    compute_idf,
-    compute_tf,
-    compute_tf_idf,
-    index,
-)
+from tuebingen_search.indexer import SNIPPET_MAX_TERMS, build_search_index, index
+from tuebingen_search.scoring import compute_df, compute_idf, compute_tf, compute_tf_idf
+from tuebingen_search.models import Document
+from tuebingen_search.load_pages import PageLoad
 
 
 def make_document(name: str) -> Document:
-    return Document(path=Path(name), length=0, text_snippet="")
+    return Document(path=Path(name), url=None, length=0, text_snippet="")
+
+
+def empty_page_load(db_path: Path) -> PageLoad:
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "CREATE TABLE pages (url TEXT, host TEXT, path TEXT, status_code INTEGER, "
+        "content_type TEXT, content_hash TEXT, fetched_at TEXT, indexed_at TEXT)"
+    )
+    con.commit()
+    con.close()
+    return PageLoad(db_path)
 
 
 def test_compute_tf_counts_term_occurrences():
@@ -99,7 +105,8 @@ def test_index_writes_msgpack_file(tmp_path):
     (site_a / "skip.txt").write_text("not html", encoding="utf-8")
     index_path = tmp_path / "index.bin"
 
-    index(str(html_dir), str(index_path))
+    pages_db = empty_page_load(tmp_path / "pages.sqlite")
+    index(html_dir, str(index_path), pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)
@@ -124,12 +131,13 @@ def test_index_stores_document_length(tmp_path):
     )
     index_path = tmp_path / "index.bin"
 
-    index(str(html_dir), str(index_path))
+    pages_db = empty_page_load(tmp_path / "pages.sqlite")
+    index(html_dir, str(index_path), pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)
 
-    _, length, _ = data["documents"][0]
+    _, _, length, _ = data["documents"][0]
     assert length == 4
 
 
@@ -143,10 +151,11 @@ def test_index_caps_snippet_length(tmp_path):
     )
     index_path = tmp_path / "index.bin"
 
-    index(str(html_dir), str(index_path))
+    pages_db = empty_page_load(tmp_path / "pages.sqlite")
+    index(html_dir, str(index_path), pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)
 
-    _, _, snippet = data["documents"][0]
+    _, _, _, snippet = data["documents"][0]
     assert len(snippet.split()) == SNIPPET_MAX_TERMS

@@ -30,9 +30,9 @@ def search_index(index: SearchIndex, query: str, top_n: int) -> list[SearchResul
 
     for rank, (doc_index, score) in enumerate(ranked_results[:top_n], start=1):
         document = index.documents[doc_index]
-        path, snippet = document.path, document.text_snippet
+        path, url, snippet = document.path, document.url, document.text_snippet
         search_results.append(
-            SearchResult(rank=rank, score=score, path=path, snippet=snippet)
+            SearchResult(rank=rank, score=score, path=path, url=url, snippet=snippet)
         )
 
     logger.info("Search computation took %s", elapsed(start))

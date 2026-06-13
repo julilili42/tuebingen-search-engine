@@ -5,7 +5,7 @@ from pathlib import Path
 from .crawler import crawl_hostname
 from .storage import load_seed_toml
 from .models import Config
-from .page_store import PageStore
+from .save_pages import PageStore
 
 logger = logging.getLogger(__name__)
 
