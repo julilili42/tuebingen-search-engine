@@ -1,6 +1,4 @@
-# search/tests/test_indexer.py
 import math
-import sqlite3
 from pathlib import Path
 
 import msgpack
@@ -9,23 +7,11 @@ import pytest
 from tuebingen_search.indexer import SNIPPET_MAX_TERMS, build_search_index, index
 from tuebingen_search.scoring import compute_df, compute_idf, compute_tf, compute_tf_idf
 from tuebingen_search.models import Document
-from tuebingen_search.load_pages import PageLoad
+from helpers import make_page_load
 
 
 def make_document(name: str) -> Document:
     return Document(path=Path(name), url=None, length=0, text_snippet="")
-
-
-def empty_page_load(db_path: Path) -> PageLoad:
-    con = sqlite3.connect(db_path)
-    con.execute(
-        "CREATE TABLE pages (url TEXT, host TEXT, path TEXT, status_code INTEGER, "
-        "content_type TEXT, content_hash TEXT, fetched_at TEXT, indexed_at TEXT)"
-    )
-    con.commit()
-    con.close()
-    return PageLoad(db_path)
-
 
 def test_compute_tf_counts_term_occurrences():
     assert compute_tf(["a", "b", "a", "c", "a"]) == {"a": 3, "b": 1, "c": 1}
@@ -105,8 +91,15 @@ def test_index_writes_msgpack_file(tmp_path):
     (site_a / "skip.txt").write_text("not html", encoding="utf-8")
     index_path = tmp_path / "index.bin"
 
-    pages_db = empty_page_load(tmp_path / "pages.sqlite")
-    index(html_dir, str(index_path), pages_db)
+    pages_db = make_page_load(
+        tmp_path / "pages.sqlite",
+        {
+            site_a / "a.html": "text/html; charset=utf-8",
+            site_b / "b.html": "text/html",
+            site_a / "skip.txt": "text/plain",
+        },
+    )
+    index(index_path, pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)
@@ -131,8 +124,10 @@ def test_index_stores_document_length(tmp_path):
     )
     index_path = tmp_path / "index.bin"
 
-    pages_db = empty_page_load(tmp_path / "pages.sqlite")
-    index(html_dir, str(index_path), pages_db)
+    pages_db = make_page_load(
+        tmp_path / "pages.sqlite", {site_dir / "a.html": "text/html"}
+    )
+    index(index_path, pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)
@@ -151,8 +146,10 @@ def test_index_caps_snippet_length(tmp_path):
     )
     index_path = tmp_path / "index.bin"
 
-    pages_db = empty_page_load(tmp_path / "pages.sqlite")
-    index(html_dir, str(index_path), pages_db)
+    pages_db = make_page_load(
+        tmp_path / "pages.sqlite", {site_dir / "long.html": "text/html"}
+    )
+    index(index_path, pages_db)
 
     with index_path.open("rb") as index_file:
         data = msgpack.unpack(index_file, raw=False)

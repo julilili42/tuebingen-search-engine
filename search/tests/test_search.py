@@ -1,10 +1,7 @@
-# search/tests/test_search.py
-import sqlite3
-
 import pytest
 
 from tuebingen_search.indexer import index
-from tuebingen_search.load_pages import PageLoad
+from helpers import make_page_load
 from tuebingen_search.search import search
 
 PAGES = {
@@ -12,18 +9,6 @@ PAGES = {
     "banana.html": "<html><body><p>banana banana cherry</p></body></html>",
     "cherry.html": "<html><body><p>cherry orange</p></body></html>",
 }
-
-
-def empty_page_load(db_path):
-    con = sqlite3.connect(db_path)
-    con.execute(
-        "CREATE TABLE pages (url TEXT, host TEXT, path TEXT, status_code INTEGER, "
-        "content_type TEXT, content_hash TEXT, fetched_at TEXT, indexed_at TEXT)"
-    )
-    con.commit()
-    con.close()
-    return PageLoad(db_path)
-
 
 @pytest.fixture
 def index_path(tmp_path):
@@ -34,7 +19,8 @@ def index_path(tmp_path):
         (site_dir / name).write_text(content, encoding="utf-8")
 
     path = tmp_path / "index.bin"
-    index(html_dir, str(path), empty_page_load(tmp_path / "pages.sqlite"))
+    pages = {site_dir / name: "text/html; charset=utf-8" for name in PAGES}
+    index(path, make_page_load(tmp_path / "pages.sqlite", pages))
     return str(path)
 
 

@@ -9,14 +9,15 @@ from tuebingen_search.cli import build_parser
 def test_index_command_defaults():
     args = build_parser().parse_args(["index"])
     assert args.command == "index"
-    assert Path(args.dir).name == "data"
     assert Path(args.output).name == "index.bin"
     assert Path(args.db).name == "pages.sqlite"
 
 
 def test_index_command_custom_arguments():
-    args = build_parser().parse_args(["index", "-d", "/tmp/html", "-o", "/tmp/out.bin"])
-    assert args.dir == "/tmp/html"
+    args = build_parser().parse_args(
+        ["index", "--db", "/tmp/pages.sqlite", "-o", "/tmp/out.bin"]
+    )
+    assert args.db == Path("/tmp/pages.sqlite")
     assert args.output == "/tmp/out.bin"
 
 
