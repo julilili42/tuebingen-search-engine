@@ -31,7 +31,7 @@ def fetch_bytes(
             if status_code == HTTPStatus.TOO_MANY_REQUESTS:
                 # last retry no delay
                 if attempt == retries - 1: 
-                    return FetchResult(None, status_code, content_type)
+                    return FetchResult(None, status_code, media_type)
 
                 # extract retry after field from header to get exact delay time
                 retry_after = response.headers.get("Retry-After")
@@ -53,12 +53,12 @@ def fetch_bytes(
             
             if status_code < 200 or status_code >= 300:
                 logger.warning("Bad status %d for %s", status_code, url)
-                return FetchResult(None, status_code, content_type)
+                return FetchResult(None, status_code, media_type)
 
             if media_type not in {"text/html", "application/xhtml+xml"}:
                 return FetchResult(None, status_code, content_type)
 
-            return FetchResult(response.content, status_code, content_type)
+            return FetchResult(response.content, status_code, media_type)
 
         except httpx.RequestError as exc:
             logger.warning("Failed to fetch %s with error %s", url, exc)
