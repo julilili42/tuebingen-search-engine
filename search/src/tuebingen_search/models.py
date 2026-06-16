@@ -14,7 +14,6 @@ class Document:
     path: Path
     url: str | None
     length: int
-    text_snippet: str
 
 
 @dataclass(frozen=True)

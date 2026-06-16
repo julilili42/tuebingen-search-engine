@@ -18,8 +18,6 @@ from .load_pages import PageLoad
 
 logger = logging.getLogger(__name__)
 
-SNIPPET_MAX_TERMS = 40
-
 def build_search_index(term_freq_index: dict[Document, TermFrequency]) -> SearchIndex:
     idf = compute_bm25_idf(term_freq_index)
     average_document_length = compute_average_document_length(term_freq_index)
@@ -89,7 +87,6 @@ def index(index_path: Path, pages_db: PageLoad) -> None:
             path=file_path,
             url=record.url,
             length=len(terms),
-            text_snippet=" ".join(terms[:SNIPPET_MAX_TERMS]),
         )
         term_frequency_index[document] = compute_tf(terms)
 
