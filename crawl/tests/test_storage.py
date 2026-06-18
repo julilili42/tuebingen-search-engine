@@ -1,16 +1,17 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from tuebingen_crawler.models import CrawlState, Statistics
-from tuebingen_crawler.storage import generate_state_path, load_state, save_state
+from tuebingen_crawler.storage import generate_state_path, load_state, save_html, save_state
 
 
 def test_generate_state_path_is_deterministic(tmp_path):
     first = generate_state_path(tmp_path, "www.tuepedia.de", "https://www.tuepedia.de/")
     second = generate_state_path(tmp_path, "www.tuepedia.de", "https://www.tuepedia.de/")
     assert first == second
-    assert first.parent == tmp_path / "www.tuepedia.de"
+    assert first.parent == tmp_path / "tuepedia.de"
     assert first.name.startswith("crawl_state-")
     assert first.suffix == ".json"
 
@@ -21,12 +22,23 @@ def test_generate_state_path_differs_per_start_url(tmp_path):
     assert first != second
 
 
+def test_save_html_writes_file_under_normalized_hostname(tmp_path):
+    body = b"<html>content</html>"
+    path = save_html("www.tuepedia.de", tmp_path, "https://www.tuepedia.de/wiki/a", body)
+
+    saved = Path(path)
+    assert saved.parent == tmp_path / "tuepedia.de"
+    assert saved.suffix == ".html"
+    assert "wiki-a" in saved.name
+    assert saved.read_bytes() == body
+
+
 def test_save_and_load_state_roundtrip(tmp_path):
     path = tmp_path / "state" / "crawl_state.json"
     state = CrawlState(
-        queue=["https://host/", "https://host/a"],
-        head=1,
-        seen={"https://host/": True, "https://host/a": True},
+        frontier=[[-5.0, 1, "https://host/", 0], [-3.0, 2, "https://host/a", 1]],
+        seen={"https://host/", "https://host/a"},
+        counter=2,
         statistics=Statistics(fetched=1, discovered=2, failed=0, saved=1),
     )
 
@@ -46,13 +58,13 @@ def test_save_state_leaves_no_tmp_file(tmp_path):
 
 def test_save_state_overwrites_existing_file(tmp_path):
     path = tmp_path / "crawl_state.json"
-    save_state(path, CrawlState(queue=["https://host/old"], head=1))
-    save_state(path, CrawlState(queue=["https://host/new"], head=0))
+    save_state(path, CrawlState(frontier=[[-1.0, 1, "https://host/old", 0]], counter=1))
+    save_state(path, CrawlState(frontier=[[-2.0, 1, "https://host/new", 0]], counter=1))
 
     loaded, ok = load_state(path)
     assert ok
-    assert loaded.queue == ["https://host/new"]
-    assert loaded.head == 0
+    assert loaded.frontier == [[-2.0, 1, "https://host/new", 0]]
+    assert loaded.counter == 1
 
 
 def test_load_state_missing_file_returns_fresh_state(tmp_path):
@@ -63,13 +75,15 @@ def test_load_state_missing_file_returns_fresh_state(tmp_path):
 
 def test_load_state_with_missing_keys_uses_defaults(tmp_path):
     path = tmp_path / "crawl_state.json"
-    path.write_text(json.dumps({"queue": ["https://host/"]}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"frontier": [[-1.0, 1, "https://host/", 0]]}), encoding="utf-8"
+    )
 
     state, ok = load_state(path)
     assert ok
-    assert state.queue == ["https://host/"]
-    assert state.head == 0
-    assert state.seen == {}
+    assert state.frontier == [[-1.0, 1, "https://host/", 0]]
+    assert state.counter == 0
+    assert state.seen == set()
     assert state.statistics == Statistics()
 
 

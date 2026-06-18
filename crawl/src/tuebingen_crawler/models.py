@@ -1,7 +1,6 @@
 
 from __future__ import annotations
 from dataclasses import field, dataclass
-from typing import List, Dict
 from pydantic import BaseModel, ConfigDict, Field
 from pathlib import Path
 
@@ -11,16 +10,13 @@ class FetchResult:
     status_code: int
     content_type: str
 
-
-
 @dataclass
 class Config:
-    sites: List[CrawlSite] = field(default_factory=list)
+    sites: list[CrawlSite] = field(default_factory=list)
     accept: str = "text/html"
     user_agent: str = "SimpleLinkCrawler/0.1"
     save_dir: Path = field(default_factory=lambda: Path("data"))
     save_state_every: int = 10
-
 
 @dataclass
 class Statistics:
@@ -29,29 +25,12 @@ class Statistics:
     failed: int = 0
     saved: int = 0
 
+    # TODO: replace print with logging
     def print(self) -> None:
         print(f"Fetched:    {self.fetched}")
         print(f"Discovered: {self.discovered}")
         print(f"Failed:     {self.failed}")
         print(f"Saved:      {self.saved}")
-
-    def reset(self) -> None:
-        self.fetched = 0
-        self.discovered = 0
-        self.failed = 0
-        self.saved = 0
-
-    def inc_fetched(self) -> None:
-        self.fetched += 1
-
-    def inc_discovered(self) -> None:
-        self.discovered += 1
-
-    def inc_failed(self) -> None:
-        self.failed += 1
-
-    def inc_saved(self) -> None:
-        self.saved += 1
 
 # since we read from json, we need to validate the input
 class CrawlSite(BaseModel):
@@ -66,9 +45,8 @@ class CrawlSite(BaseModel):
 
 @dataclass
 class CrawlState:
-    queue: List[str] = field(default_factory=list)
-    head: int = 0
-    seen: Dict[str, bool] = field(default_factory=dict)
+    frontier: list[list[float, int, int]] = field(default_factory=list)
+    seen: set[str] = field(default_factory=set)
+    counter: int = 0
     statistics: Statistics = field(default_factory=Statistics)
-
 

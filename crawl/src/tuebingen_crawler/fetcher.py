@@ -1,15 +1,36 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 import httpx
-from pathlib import Path
 from http import HTTPStatus
-from .urls import url_slug
 from .models import FetchResult
+from .models import CrawlState, CrawlSite
 
 logger = logging.getLogger(__name__)
+
+
+def fetch_page(
+      client: httpx.Client,
+      url: str,
+      site: CrawlSite,
+      state: CrawlState,
+  ) -> FetchResult | None:
+      try:
+          result = fetch_bytes(
+              client=client,
+              url=url,
+              retry_delay=site.retry_delay,
+              retries=site.retries,
+          )
+      except Exception:
+          logger.error("%-7s | %-3s | %-24s | %s", "FAILED", "-", "-", url)
+          state.statistics.failed += 1
+          return None
+
+      state.statistics.fetched += 1
+      time.sleep(site.request_delay)
+      return result
 
 def fetch_bytes(
     client: httpx.Client,
@@ -26,7 +47,6 @@ def fetch_bytes(
             status_code = response.status_code
             content_type = response.headers.get("Content-Type", "")
             media_type = content_type.partition(";")[0].strip().lower()
-
 
             if status_code == HTTPStatus.TOO_MANY_REQUESTS:
                 # last retry no delay
@@ -67,18 +87,7 @@ def fetch_bytes(
                 raise RuntimeError(
                     f"Failed to fetch {url} after {retries} attempts"
                 ) from exc
-            
+
             delay = min((attempt + 1) * retry_delay, 30.0)
             time.sleep(delay)
             continue
-
-def save_html(hostname: str, base_dir: Path, page_url: str, body: bytes) -> str:
-    digest = hashlib.sha256(page_url.encode("utf-8")).hexdigest()[:8]
-    file_name = f"{digest}-{url_slug(page_url)}.html"
-
-    directory = base_dir / hostname
-    directory.mkdir(parents=True, exist_ok=True)
-
-    path = directory / file_name
-    path.write_bytes(body)
-    return str(path)

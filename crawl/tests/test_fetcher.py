@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 import tuebingen_crawler.fetcher as fetcher
-from tuebingen_crawler.fetcher import fetch_bytes, save_html
+from tuebingen_crawler.fetcher import fetch_bytes
+from tuebingen_crawler.storage import save_html
 
 HTML_HEADERS = {"Content-Type": "text/html; charset=utf-8"}
 
@@ -25,12 +26,14 @@ def test_fetch_bytes_returns_html_body(sleep_calls):
         return httpx.Response(200, headers=HTML_HEADERS, content=b"<html>ok</html>")
 
     with make_client(handler) as client:
-        body = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
+        result = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
 
-    assert body == b"<html>ok</html>"
+    assert result.body == b"<html>ok</html>"
+    assert result.status_code == 200
+    assert result.content_type == "text/html"
 
 
-def test_fetch_bytes_raises_after_retries_on_bad_status(sleep_calls):
+def test_fetch_bytes_returns_empty_result_on_bad_status(sleep_calls):
     requests = []
 
     def handler(request):
@@ -38,10 +41,12 @@ def test_fetch_bytes_raises_after_retries_on_bad_status(sleep_calls):
         return httpx.Response(404, headers=HTML_HEADERS)
 
     with make_client(handler) as client:
-        with pytest.raises(RuntimeError):
-            fetch_bytes(client, "https://host/missing", retry_delay=1.0, retries=3)
+        result = fetch_bytes(client, "https://host/missing", retry_delay=1.0, retries=3)
 
-    assert len(requests) == 3
+    assert len(requests) == 1
+    assert result.body is None
+    assert result.status_code == 404
+    assert result.content_type == "text/html"
 
 
 def test_fetch_bytes_skips_non_html_content(sleep_calls):
@@ -51,8 +56,11 @@ def test_fetch_bytes_skips_non_html_content(sleep_calls):
         )
 
     with make_client(handler) as client:
-        with pytest.raises(RuntimeError):
-            fetch_bytes(client, "https://host/file.pdf", retry_delay=1.0, retries=2)
+        result = fetch_bytes(client, "https://host/file.pdf", retry_delay=1.0, retries=2)
+
+    assert result.body is None
+    assert result.status_code == 200
+    assert result.content_type == "application/pdf"
 
 
 def test_fetch_bytes_honors_retry_after_header(sleep_calls):
@@ -65,9 +73,9 @@ def test_fetch_bytes_honors_retry_after_header(sleep_calls):
         return httpx.Response(200, headers=HTML_HEADERS, content=b"<html>ok</html>")
 
     with make_client(handler) as client:
-        body = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
+        result = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
 
-    assert body == b"<html>ok</html>"
+    assert result.body == b"<html>ok</html>"
     assert sleep_calls == [5.0]
 
 
@@ -86,15 +94,16 @@ def test_fetch_bytes_falls_back_to_retry_delay_on_invalid_retry_after(sleep_call
     assert sleep_calls == [2.0]
 
 
-def test_fetch_bytes_caps_backoff_delay_at_30s(sleep_calls):
+def test_fetch_bytes_caps_backoff_delay_at_30s_and_returns_empty_result(sleep_calls):
     def handler(request):
         return httpx.Response(429)
 
     with make_client(handler) as client:
-        with pytest.raises(RuntimeError):
-            fetch_bytes(client, "https://host/", retry_delay=20.0, retries=3)
+        result = fetch_bytes(client, "https://host/", retry_delay=20.0, retries=3)
 
-    assert sleep_calls == [20.0, 30.0, 30.0]
+    assert result.body is None
+    assert result.status_code == 429
+    assert sleep_calls == [20.0, 30.0]
 
 
 def test_fetch_bytes_retries_on_request_error(sleep_calls):
@@ -107,9 +116,9 @@ def test_fetch_bytes_retries_on_request_error(sleep_calls):
         return httpx.Response(200, headers=HTML_HEADERS, content=b"<html>ok</html>")
 
     with make_client(handler) as client:
-        body = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
+        result = fetch_bytes(client, "https://host/", retry_delay=1.0, retries=3)
 
-    assert body == b"<html>ok</html>"
+    assert result.body == b"<html>ok</html>"
     assert len(attempts) == 2
 
 
@@ -118,7 +127,7 @@ def test_save_html_writes_file_under_hostname(tmp_path):
     path = save_html("www.tuepedia.de", tmp_path, "https://www.tuepedia.de/wiki/a", body)
 
     saved = Path(path)
-    assert saved.parent == tmp_path / "www.tuepedia.de"
+    assert saved.parent == tmp_path / "tuepedia.de"
     assert saved.suffix == ".html"
     assert "wiki-a" in saved.name
     assert saved.read_bytes() == body

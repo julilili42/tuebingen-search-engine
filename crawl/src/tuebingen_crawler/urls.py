@@ -1,75 +1,36 @@
 from __future__ import annotations
 
-from html.parser import HTMLParser
-from typing import Dict, List, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
 
 
-class LinkExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.hrefs: List[str] = []
-
-    def handle_starttag(self, tag: str, attrs: List[Tuple[str, str | None]]) -> None:
-        if tag.lower() != "a":
-            return
-
-        for key, value in attrs:
-            if key.lower() == "href" and value:
-                self.hrefs.append(value)
+def normalize_host(host: str | None) -> str:
+    if not host:
+        return ""
+    return host.lower().removeprefix("www.")
 
 
-def extract_urls(
-    seen_urls: Dict[str, bool],
-    body: bytes,
-    current_url: str,
-    allowed_host: str,
-) -> List[str]:
-    parser = LinkExtractor()
-    parser.feed(body.decode("utf-8", errors="replace"))
+# wrapper around canonical_url
+def validate_start_url(url: str) -> str:
+    canonical_start, is_valid = canonical_url(url, url)
+    if not is_valid:
+        raise ValueError(f"ERROR: invalid starting url {url}")
+    return canonical_start
 
-    urls: List[str] = []
-    for href in parser.hrefs:
-        final_url, is_canonical = canonical_url(href, current_url, allowed_host)
-        if not is_canonical:
-            continue
-
-        if not seen_urls.get(final_url, False):
-            seen_urls[final_url] = True
-            urls.append(final_url)
-
-    return urls
-
-def hostname_for_url(starting_url: str) -> str:
-    parsed = urlparse(starting_url)
-
-    if not parsed.scheme or not parsed.hostname:
-        raise ValueError(f"ERROR: failed to parse starting url {starting_url}")
-
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(f"ERROR: unsupported url scheme {parsed.scheme}")
-
-    return parsed.hostname.lower()
-
-def canonical_url(raw_url: str, base_url: str, allowed_host: str) -> Tuple[str, bool]:
+# normalizes url
+def canonical_url(raw_url: str, base_url: str) -> tuple[str, bool]:
     absolute = urljoin(base_url, raw_url)
     parsed = urlparse(absolute)
 
-    if parsed.scheme not in {"http", "https"}:
-        return "", False
-
-    if parsed.hostname != allowed_host:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return "", False
 
     path = parsed.path
     if path != "/":
         path = path.rstrip("/")
 
-    netloc = parsed.netloc.lower()
-
     final_url = urlunparse((
         parsed.scheme,
-        netloc,
+        parsed.netloc.lower(),
         path,
         "",  # params
         "",  # query ignored

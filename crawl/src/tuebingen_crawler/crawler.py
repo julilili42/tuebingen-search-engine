@@ -1,25 +1,35 @@
 from __future__ import annotations
 
 import logging
-import time
 import hashlib
 from pathlib import Path
-from .models import Statistics, CrawlState, Config, CrawlSite
-from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state
-from .urls import canonical_url, extract_urls, hostname_for_url
-from .fetcher import fetch_bytes, save_html
+from .models import CrawlState, Config, CrawlSite
+from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state, save_html
+from .urls import validate_start_url, canonical_url, normalize_host
+from .fetcher import fetch_page
+from .extract import parse_page
+from .heuristic import evaluate_page, link_score, should_enqueue
 from .save_pages import PageStore
+from .frontier import push_frontier, pop_frontier
 import httpx
 from urllib.robotparser import RobotFileParser
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# seed links have highest possible priority
+SEED_SCORE = 1_000_000.0
 
 
 def crawl_hostname(config: Config, page_store: PageStore) -> None:
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
 
+    # seed global seen set
+    # avoids crawling the same page from different starting seeds
+    seen: set[str] = set()
+
     for site in config.sites:
-        with httpx.Client(timeout=site.request_timeout, headers=headers) as client:            
+        with httpx.Client(timeout=site.request_timeout, headers=headers) as client:
             robot_parser = load_robots(client, site)
 
             # skips urls which categorically disallow crawling
@@ -27,118 +37,186 @@ def crawl_hostname(config: Config, page_store: PageStore) -> None:
                 logger.warning("Skipping %s because robots.txt disallows it", site.url)
                 continue
 
-            state = crawl_site(client, site, config.save_dir, config.save_state_every, page_store, robot_parser, config.user_agent)
+            state = crawl_site(
+                client,
+                site,
+                config.save_dir,
+                config.save_state_every,
+                page_store,
+                robot_parser,
+                config.user_agent,
+                seen,
+            )
 
             state.statistics.print()
+
 
 def crawl_site(
     client: httpx.Client,
     site: CrawlSite,
-    save_dir: Path, 
+    save_dir: Path,
     save_state_every: int,
     page_store: PageStore,
     robot_parser: RobotFileParser,
-    user_agent: str
+    user_agent: str,
+    seen: set[str] | None = None,
 ) -> CrawlState:
-    # restricts crawler to stay on hostname it started on
-    allowed_host = hostname_for_url(site.url)
-    # normalize starting url
-    canonical_start, is_canonical = canonical_url(site.url, site.url, allowed_host)
-    if not is_canonical:
-        raise ValueError(f"ERROR: starting url {site.url} is not canonical")
+    seen = seen if seen is not None else set()
 
-    state_path = generate_state_path(save_dir, allowed_host, canonical_start)
-    state, loaded = load_state(state_path)
+    canonical_start = validate_start_url(site.url)
+    hostname = normalize_host(urlparse(canonical_start).hostname)
 
-    if loaded:
-        if state.head < len(state.queue):
-            logger.info("Resuming crawl at %s", state.queue[state.head])
-        else:
-            logger.info("Crawl state is already complete")
-    else:
-        state = CrawlState(queue=[canonical_start], head=0, seen={canonical_start: True}, statistics=Statistics())
+    state_path = generate_state_path(save_dir, hostname, canonical_start)
+    state = load_or_create_state(state_path, canonical_start, seen)
 
-
-    while state.head < len(state.queue):
+    # crawling continues until the heap is empty or max_page is reached.
+    while state.frontier:
         if site.max_pages >= 0 and state.statistics.saved >= site.max_pages:
             break
 
-        current_url = state.queue[state.head]
-        state.head += 1
-        state.statistics.inc_discovered()
+        current_url, depth = pop_frontier(state)
+        state.statistics.discovered += 1
 
         if not robot_parser.can_fetch(user_agent, current_url):
             logger.info("Skipping disallowed URL: %s", current_url)
-            state.statistics.inc_failed()
+            state.statistics.failed += 1
             continue
 
-        try:
-            fetch_result = fetch_bytes(
-                client=client,
-                url=current_url,
-                retry_delay=site.retry_delay,
-                retries=site.retries,
-            )
-        except Exception as exc:
-            logger.error(
-                "%-7s | %-3s | %-24s | %s",
-                "FAILED",
-                "-",
-                "-",
-                current_url,
-            )
-            state.statistics.inc_failed()
-            continue
+        fetch_result = fetch_page(client, current_url, site, state)
 
-        state.statistics.inc_fetched()
-        time.sleep(site.request_delay)
+        if fetch_result is None:
+            continue
 
         if fetch_result.body is None:
+            status = fetch_result.status_code
+            bad_status = status < 200 or status >= 300
+            if bad_status:
+                state.statistics.failed += 1
             logger.info(
                 "%-7s | %3d | %-24s | %s",
-                "SKIPPED",
-                fetch_result.status_code,
+                "FAILED" if bad_status else "SKIPPED",
+                status,
                 fetch_result.content_type,
                 current_url,
             )
             continue
-        
-        logger.info(
-            "%-7s | %3d | %-24s | %s",
-            "FETCHED",
-            fetch_result.status_code,
-            fetch_result.content_type,
-            current_url,
-        )
-        try:
-            path = save_html(allowed_host, save_dir, current_url, fetch_result.body)
-        except Exception as exc:
-            logger.error("Failed to save html %s with error %s", current_url, exc)
-            state.statistics.inc_failed()
-            continue
-        
-        # add page entry into sqlite db
-        page_store.upsert_page(
-            url=current_url,
-            host=allowed_host,
-            path=path,
-            status_code=fetch_result.status_code,
-            content_type=fetch_result.content_type,
-            content_hash=hashlib.sha256(fetch_result.body).hexdigest(),
-        )
-
-        state.statistics.inc_saved()
 
         try:
-            extracted_urls = extract_urls(state.seen, fetch_result.body, current_url, allowed_host)
+            page = parse_page(fetch_result.body)
         except Exception as exc:
-            logger.error("Failed to extract urls at %s with error %s", current_url, exc)
-            state.statistics.inc_failed()
+            logger.error("Failed to parse %s with error %s", current_url, exc)
+            state.statistics.failed += 1
             continue
 
-        state.queue.extend(extracted_urls)
+        # calculate PageVerdict to rank importance of url in relationship to topic
+        verdict = evaluate_page(current_url, page.title, page.text, page.lang)
+
+        if not verdict.is_relevant:
+            logger.info(
+                "%-7s | %3d | rel=%5.1f | %s",
+                "OFFTOPIC",
+                fetch_result.status_code,
+                verdict.relevance,
+                current_url,
+            )
+            continue
+
+        if verdict.keep:
+            try:
+                hostname = normalize_host(urlparse(current_url).hostname)
+                path = save_html(hostname, save_dir, current_url, fetch_result.body)
+            except Exception as exc:
+                logger.error("Failed to save html %s with error %s", current_url, exc)
+                state.statistics.failed += 1
+                continue
+
+            # write crawl information into sqlite db
+            page_store.upsert_page(
+                title=page.title,
+                url=current_url,
+                host=hostname,
+                path=path,
+                status_code=fetch_result.status_code,
+                content_type=fetch_result.content_type,
+                content_hash=hashlib.sha256(fetch_result.body).hexdigest(),
+            )
+            state.statistics.saved += 1
+
+            # page is kept therefore eval. of all links on current url
+            # add relevant urls to the frontier
+            evaluate_links(
+                state=state,
+                links=page.links,
+                current_url=current_url,
+                depth=depth,
+                parent_relevance=verdict.relevance,
+                parent_host=hostname,
+            )
+
+            logger.info(
+                "%-7s | %3d | rel=%5.1f | %s",
+                "SAVED",
+                fetch_result.status_code,
+                verdict.relevance,
+                current_url,
+            )
+        else:
+            logger.info(
+                "%-7s | %3d | lang=%s | %s",
+                "NON-EN",
+                fetch_result.status_code,
+                verdict.language,
+                current_url,
+            )
+
         maybe_save_state(save_state_every, state_path, state)
 
     save_state(state_path, state)
 
+    return state
+
+
+# add relevant urls on current_url to frontier
+def evaluate_links(
+    state: CrawlState,
+    links: list[tuple[str, str]],
+    current_url: str,
+    depth: int,
+    parent_relevance: float,
+    parent_host: str,
+) -> None:
+    child_depth = depth + 1
+
+    for href, anchor in links:
+        final_url, is_canonical = canonical_url(href, current_url)
+        if not is_canonical or final_url in state.seen:
+            continue
+
+        score = link_score(anchor, final_url, parent_relevance, parent_host)
+        if should_enqueue(score, child_depth):
+            push_frontier(state, score, final_url, child_depth)
+
+        state.seen.add(final_url)
+
+
+# load intermediate state or start a new one
+def load_or_create_state(
+    state_path: Path,
+    canonical_start: str,
+    seen: set[str],
+) -> CrawlState:
+    state, loaded = load_state(state_path)
+
+    seen.update(state.seen)
+    state.seen = seen
+
+    if loaded:
+        if state.frontier:
+            logger.info("Resuming crawl with %d queued links", len(state.frontier))
+        else:
+            logger.info("Crawl state is already complete")
+        return state
+
+    state.seen.add(canonical_start)
+    push_frontier(state, SEED_SCORE, canonical_start, depth=0)
     return state

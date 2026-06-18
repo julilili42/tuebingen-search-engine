@@ -10,11 +10,28 @@ from tuebingen_crawler.save_pages import PageStore
 
 HTML_HEADERS = {"Content-Type": "text/html; charset=utf-8"}
 
+# Englischer, Tübingen-relevanter Fülltext, damit die Heuristik die Seiten
+# als keep-würdig einstuft (sonst werden sie als off-topic/non-en verworfen).
+FILLER = (
+    "<html lang=\"en\"><title>Tübingen</title>"
+    "The city of Tübingen is an old university town in the south of Germany "
+    "and it is a place that you can visit for the old streets and the river. "
+)
+
+
+def page(*links: str) -> bytes:
+    return (FILLER + "".join(links)).encode("utf-8")
+
+
 PAGES = {
-    "/": b'<a href="/a">A</a><a href="/b">B</a><a href="https://example.com/x">ext</a>',
-    "/a": b'<a href="/b">B</a><a href="/c">C</a>',
-    "/b": b"<html>leaf</html>",
-    "/c": b"<html>leaf</html>",
+    "/": page(
+        '<a href="/a">A</a>',
+        '<a href="/b">B</a>',
+        '<a href="https://example.com/x">ext</a>',
+    ),
+    "/a": page('<a href="/b">B</a>', '<a href="/c">C</a>'),
+    "/b": page("leaf"),
+    "/c": page("leaf"),
 }
 
 
@@ -65,7 +82,7 @@ def make_site(**overrides) -> CrawlSite:
     return CrawlSite(**defaults)
 
 
-def run_crawl(client, tmp_path, page_store, **site_overrides):
+def run_crawl(client, tmp_path, page_store, seen=None, **site_overrides):
     return crawl_site(
         client=client,
         site=make_site(**site_overrides),
@@ -74,6 +91,7 @@ def run_crawl(client, tmp_path, page_store, **site_overrides):
         page_store=page_store,
         robot_parser=allow_all_robots(),
         user_agent="TestCrawler/1.0",
+        seen=seen,
     )
 
 
@@ -103,6 +121,16 @@ def test_crawl_site_saves_html_files(client, tmp_path, page_store):
         assert saved.read_bytes() == PAGES[httpx.URL(page.url).path]
 
 
+def test_crawl_site_uses_normalized_host_for_storage(tmp_path, page_store):
+    with make_client(PAGES, []) as client:
+        run_crawl(client, tmp_path, page_store, url="https://www.host/")
+
+    pages = list(page_store.iter_html_pages())
+    assert pages
+    assert {page.host for page in pages} == {"host"}
+    assert all(Path(page.path).parent == tmp_path / "host" for page in pages)
+
+
 def test_crawl_site_respects_max_pages(client, tmp_path, page_store, requested_paths):
     run_crawl(client, tmp_path, page_store, max_pages=2)
 
@@ -122,8 +150,8 @@ def test_crawl_site_updates_statistics(client, tmp_path, page_store):
 def test_crawl_site_counts_failed_fetches(tmp_path, page_store, requested_paths):
     # /missing returns 404 and exhausts its single retry
     pages = {
-        "/": b'<a href="/a">A</a><a href="/missing">dead</a>',
-        "/a": b"<html>leaf</html>",
+        "/": page('<a href="/a">A</a>', '<a href="/missing">dead</a>'),
+        "/a": page("leaf"),
     }
 
     with make_client(pages, requested_paths) as client:
@@ -135,13 +163,25 @@ def test_crawl_site_counts_failed_fetches(tmp_path, page_store, requested_paths)
     assert state.statistics.saved == 2
 
 
+def test_crawl_site_skips_request_errors(tmp_path, page_store):
+    def handler(request):
+        raise httpx.ConnectError("certificate verify failed", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        state = run_crawl(client, tmp_path, page_store)
+
+    assert stored_urls(page_store) == []
+    assert state.statistics.failed == 1
+    assert state.statistics.saved == 0
+
+
 def test_crawl_site_resumes_completed_state_without_fetching(client, tmp_path, page_store, requested_paths):
     first = run_crawl(client, tmp_path, page_store)
     fetches_first_run = len(requested_paths)
 
     second = run_crawl(client, tmp_path, page_store)
 
-    assert second.queue == first.queue
+    assert second.frontier == first.frontier
     # state was complete, so the second run performs no requests
     assert len(requested_paths) == fetches_first_run
 
@@ -149,3 +189,22 @@ def test_crawl_site_resumes_completed_state_without_fetching(client, tmp_path, p
 def test_crawl_site_rejects_invalid_starting_url(client, tmp_path, page_store):
     with pytest.raises(ValueError):
         run_crawl(client, tmp_path, page_store, url="ftp://host/")
+
+
+def test_shared_seen_prevents_refetch_across_seeds(client, tmp_path, page_store, requested_paths):
+    # ein gemeinsames seen-Set über zwei Crawl-Läufe hinweg; getrennte save_dirs,
+    # damit der zweite Lauf NICHT über den persistierten State resumt und so
+    # wirklich nur der Effekt des geteilten seen-Sets getestet wird.
+    seen: set[str] = set()
+
+    run_crawl(client, tmp_path / "seed_a", page_store, seen=seen)
+    first_run_paths = list(requested_paths)
+    requested_paths.clear()
+
+    # zweiter Seed mit eigenem State, aber demselben seen. Nur der Seed-Root
+    # wird immer neu in die Frontier gepusht; die entdeckten Kinder-Links
+    # (/a, /b, /c) sind bereits im geteilten seen und werden nicht erneut geholt.
+    run_crawl(client, tmp_path / "seed_b", page_store, seen=seen)
+
+    assert sorted(first_run_paths) == ["/", "/a", "/b", "/c"]
+    assert requested_paths == ["/"]  # nur der Root, keine Kinder-Refetches
