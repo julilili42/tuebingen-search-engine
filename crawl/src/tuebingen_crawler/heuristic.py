@@ -13,17 +13,70 @@ from .urls import normalize_host
 _STOPWORDS: tuple[set[str], set[str]] | None = None
 
 TUEBINGEN_TERMS: dict[str, float] = {
-    "tübingen": 3.0, "tuebingen": 3.0, "tubingen": 3.0,
-    "neckar": 1.0, "swabia": 1.0, "schwaben": 1.0,
-    "eberhard karls": 1.5, "hölderlin": 1.0, "hoelderlin": 1.0,
-    "hohentübingen": 1.5, "bebenhausen": 1.0, "stiftskirche": 0.5,
-}
+      **dict.fromkeys([
+          "tübingen", "tuebingen", "tubingen", "universitätsstadt tübingen",
+          "city of tübingen",
+      ], 6.0),
 
-# skip sites wich end in these suffixes
-RESOURCE_SUFFIXES = (
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
-    ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2",
-)
+      **dict.fromkeys([
+          "stadt tübingen", "tübingen.de", "tuebingen.de", "landkreis tübingen",
+          "district of tübingen", "kreis tübingen", "rathaus tübingen",
+          "tourist information tübingen", "tübingen tourism", "tourismus tübingen",
+      ], 4.0),
+
+      **dict.fromkeys([
+          "university of tübingen", "universität tübingen",
+          "eberhard karls", "eberhard karls university",
+          "eberhard karls universität", "uni tübingen",
+          "universitätsklinikum tübingen", "university hospital tübingen",
+          "max planck tübingen", "max-planck-institut tübingen",
+          "cyber valley tübingen", "tübingen ai center", "ai center tübingen",
+      ], 4.0),
+
+      **dict.fromkeys([
+          "schloss hohentübingen", "hohentübingen", "hölderlin tower",
+          "hölderlinturm", "neckarfront", "stiftskirche tübingen",
+          "marktplatz tübingen", "old town tübingen", "altstadt tübingen",
+          "bebenhausen", "kloster bebenhausen", "bebenhausen monastery",
+          "kunsthalle tübingen", "stadtmuseum tübingen",
+          "botanischer garten tübingen", "botanical garden tübingen",
+      ], 3.5),
+
+      **dict.fromkeys([
+          "stocherkahn", "stocherkahnrennen", "chocolart",
+          "tübingen chocolart", "filmfest tübingen",
+          "französische filmtage tübingen", "arabisches filmfestival tübingen",
+          "landestheater tübingen", "ltt tübingen", "zimmertheater tübingen",
+          "sudhaus tübingen", "club voltaire tübingen", "arsenalkino tübingen",
+      ], 3.0),
+
+      **dict.fromkeys([
+          "lustnau", "derendingen", "waldhäuser ost", "who tübingen",
+          "weststadt tübingen", "südstadt tübingen", "innenstadt tübingen",
+          "unterjesingen", "hagelloch", "pfrondorf", "weilheim tübingen",
+          "kilchberg tübingen", "hirschau tübingen", "bebenhausen tübingen",
+      ], 2.0),
+
+      **dict.fromkeys([
+          "tübingen hauptbahnhof", "tübingen station", "tübingen hbf",
+          "zob tübingen", "naldo tübingen", "ammertalbahn", "neckar-alb-bahn",
+          "tigers tübingen", "sv 03 tübingen", "vhs tübingen",
+          "stadtbücherei tübingen", "universitätsbibliothek tübingen",
+      ], 2.5),
+
+      **dict.fromkeys([
+          "neckar-alb", "rottenburg am neckar", "reutlingen",
+      ], 1.0),
+
+      **dict.fromkeys([
+          "neckar", "am neckar", "neckar river",
+          "baden-württemberg", "baden wuerttemberg", "baden wurttemberg",
+      ], 0.6),
+
+      **dict.fromkeys([
+          "swabia", "schwaben", "swabian",
+      ], 0.3),
+  }
 
 # language detection reliable if >= 30 tokens
 MIN_TOKENS_FOR_LANG = 30
@@ -166,13 +219,28 @@ LINK_FEATURE_WEIGHTS: dict[str, float] = {
     "internal_link": 1.0,
 }
 
+# skip sites wich end in these suffixes
+RESOURCE_SUFFIXES = (
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
+    ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2",
+)
+
+# skip overview sites 
+SKIP_PATH_WORDS = {"category", "appendix"}
+
+def is_skipable(url: str) -> bool:
+    if url.lower().endswith(RESOURCE_SUFFIXES):
+        return True
+    path = urlparse(url).path.lower()
+    return any(kw in path for kw in SKIP_PATH_WORDS)
+
 def link_score(
     anchor: str,
     url: str,
     parent_relevance: float,
     parent_host: str,
 ) -> float:
-    if url.lower().endswith(RESOURCE_SUFFIXES):
+    if is_skipable(url):
         return 0.0
 
     anchor_l, url_l = anchor.lower(), url.lower()
