@@ -63,6 +63,12 @@ TUEBINGEN_TERMS: dict[str, float] = {
           "tigers tübingen", "sv 03 tübingen", "vhs tübingen",
           "stadtbücherei tübingen", "universitätsbibliothek tübingen",
       ], 2.5),
+  
+       **dict.fromkeys([                                                                                                                                          "restaurant", "restaurants", "cafe", "café", "coffee house", "bistro",
+       "biergarten", "beer garden", "brewery", "bakery", "pub", "tavern",
+       "wine bar", "weinstube", "hotel", "hostel", "guesthouse", "pension",
+        "things to do", "where to eat", "attractions", "sightseeing", "nightlife",
+        ], 1.5),
 
       **dict.fromkeys([
           "neckar-alb", "rottenburg am neckar", "reutlingen",
@@ -81,9 +87,9 @@ TUEBINGEN_TERMS: dict[str, float] = {
 # language detection reliable if >= 30 tokens
 MIN_TOKENS_FOR_LANG = 30
 # site is relevant
-REL_THRESHOLD = 3.0
+REL_THRESHOLD = 4.0
 # link is added to frontier
-LINK_THRESHOLD = 3.0
+LINK_THRESHOLD = 4.0
 # link is ignored
 MAX_DEPTH = 5
 
@@ -191,9 +197,9 @@ def relevance_score(url: str, title: str, text: str) -> float:
         if term in title:
             score += weight * _TERM_IN_TITLE_WEIGHT
 
-        # TODO: Counts substrings not terms
         # calculate score based on term weight and term frequency in the body
-        term_frequency = text.count(term)
+        # matches on terms exactly: "tourist information tübingen tourist" -> len(...) = 1
+        term_frequency = len(re.findall(rf"\b{re.escape(term)}\b", text))
         if term_frequency:
             score += weight * min(term_frequency / n_tokens * 1000.0, 5.0)
     return score
@@ -226,7 +232,7 @@ RESOURCE_SUFFIXES = (
 )
 
 # skip overview sites 
-SKIP_PATH_WORDS = {"category", "appendix"}
+SKIP_PATH_WORDS = {"category", "appendix", "talk"}
 
 def is_skipable(url: str) -> bool:
     if url.lower().endswith(RESOURCE_SUFFIXES):

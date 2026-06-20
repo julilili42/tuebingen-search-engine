@@ -1,4 +1,4 @@
 [[sites]]
 url = "https://en.wikipedia.org/wiki/T%C3%BCbingen"
-max_pages = 1000
+max_pages = 500
 request_delay = 0.5

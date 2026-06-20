@@ -40,7 +40,7 @@ def fetch_bytes(
 ) -> FetchResult:
     for attempt in range(retries):
         if attempt > 0:
-            logger.info("Retry attempt %d ...", attempt)
+            logger.info("Retry attempt %d...", attempt)
 
         try:
             response = client.get(url)
@@ -76,7 +76,7 @@ def fetch_bytes(
                 return FetchResult(None, status_code, media_type)
 
             if media_type not in {"text/html", "application/xhtml+xml"}:
-                return FetchResult(None, status_code, content_type)
+                return FetchResult(None, status_code, media_type)
 
             return FetchResult(response.content, status_code, media_type)
 
