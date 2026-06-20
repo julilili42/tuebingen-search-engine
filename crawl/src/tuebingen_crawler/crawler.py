@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import hashlib
 from pathlib import Path
 from .models import CrawlState, Config, CrawlSite
 from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state, save_html
@@ -12,6 +11,7 @@ from .heuristic import evaluate_page, link_score, should_enqueue
 from .save_pages import PageStore
 from .frontier import push_frontier, pop_frontier
 import httpx
+import hashlib
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse
 
@@ -23,10 +23,10 @@ SEED_SCORE = 1_000_000.0
 
 def crawl_hostname(config: Config, page_store: PageStore) -> None:
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
-
-    # seed global seen set
-    # avoids crawling the same page from different starting seeds
-    seen: set[str] = set()
+    # avoids crawling duplicate pages
+    # page might have different urls but same content
+    seen_urls: set[str] = set()
+    seen_texts: set[str] = set()
 
     for site in config.sites:
         with httpx.Client(timeout=site.request_timeout, headers=headers) as client:
@@ -45,7 +45,8 @@ def crawl_hostname(config: Config, page_store: PageStore) -> None:
                 page_store,
                 robot_parser,
                 config.user_agent,
-                seen,
+                seen_urls,
+                seen_texts
             )
 
             state.statistics.print()
@@ -59,15 +60,17 @@ def crawl_site(
     page_store: PageStore,
     robot_parser: RobotFileParser,
     user_agent: str,
-    seen: set[str] | None = None,
+    seen_urls: set[str] | None = None,
+    seen_texts: set[str] | None = None
 ) -> CrawlState:
-    seen = seen if seen is not None else set()
+    seen_urls = seen_urls if seen_urls is not None else set()
+    seen_texts = seen_texts if seen_texts is not None else set()
 
     canonical_start = validate_start_url(site.url)
     hostname = normalize_host(urlparse(canonical_start).hostname)
 
     state_path = generate_state_path(save_dir, hostname, canonical_start)
-    state = load_or_create_state(state_path, canonical_start, seen)
+    state = load_or_create_state(state_path, canonical_start, seen_urls, seen_texts)
 
     # crawling continues until the heap is empty or max_page is reached.
     while state.frontier:
@@ -107,6 +110,16 @@ def crawl_site(
             logger.error("Failed to parse %s with error %s", current_url, exc)
             state.statistics.failed += 1
             continue
+        
+        if not page.text.strip():
+            continue
+
+        # avoids recrawling the same content
+        text_hash = hashlib.sha256(page.text.strip().encode("utf-8")).hexdigest()
+        if page.text and text_hash in seen_texts:
+            logger.info("Skipping already seen text: %s", current_url)
+            continue
+        seen_texts.add(text_hash)
 
         # calculate PageVerdict to rank importance of url in relationship to topic
         verdict = evaluate_page(current_url, page.title, page.text, page.lang)
@@ -138,7 +151,6 @@ def crawl_site(
                 path=path,
                 status_code=fetch_result.status_code,
                 content_type=fetch_result.content_type,
-                content_hash=hashlib.sha256(fetch_result.body).hexdigest(),
             )
             state.statistics.saved += 1
 
@@ -189,26 +201,29 @@ def evaluate_links(
 
     for href, anchor in links:
         final_url, is_canonical = canonical_url(href, current_url)
-        if not is_canonical or final_url in state.seen:
+        if not is_canonical or final_url in state.seen_urls:
             continue
 
         score = link_score(anchor, final_url, parent_relevance, parent_host)
         if should_enqueue(score, child_depth):
             push_frontier(state, score, final_url, child_depth)
 
-        state.seen.add(final_url)
+        state.seen_urls.add(final_url)
 
 
 # load intermediate state or start a new one
 def load_or_create_state(
     state_path: Path,
     canonical_start: str,
-    seen: set[str],
+    seen_urls: set[str],
+    seen_texts: set[str],
 ) -> CrawlState:
     state, loaded = load_state(state_path)
 
-    seen.update(state.seen)
-    state.seen = seen
+    seen_urls.update(state.seen_urls)
+    seen_texts.update(state.seen_texts)
+    state.seen_urls = seen_urls
+    state.seen_texts = seen_texts
 
     if loaded:
         if state.frontier:
@@ -217,6 +232,6 @@ def load_or_create_state(
             logger.info("Crawl state is already complete")
         return state
 
-    state.seen.add(canonical_start)
+    state.seen_urls.add(canonical_start)
     push_frontier(state, SEED_SCORE, canonical_start, depth=0)
     return state

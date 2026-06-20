@@ -106,8 +106,8 @@ def save_state(path: Path, state: CrawlState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     data = asdict(state)
-    # set ist nicht JSON-serialisierbar -> als sortierte Liste ablegen
-    data["seen"] = sorted(state.seen)
+    data["seen_urls"] = sorted(state.seen_urls)
+    data["seen_texts"] = sorted(state.seen_texts)
 
     tmp_path = path.with_name(path.name + ".tmp")
     tmp_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
@@ -123,13 +123,12 @@ def load_state(path: Path) -> tuple[CrawlState, bool]:
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        # JSON liefert die Heap-Einträge als Listen zurück; nach dem Laden
-        # muss die Heap-Invariante wiederhergestellt werden.
         frontier = [list(entry) for entry in data.get("frontier", [])]
         heapq.heapify(frontier)
         state = CrawlState(
             frontier=frontier,
-            seen=set(data.get("seen", [])),
+            seen_urls=set(data.get("seen_urls", [])),
+            seen_texts=set(data.get("seen_texts", [])),
             counter=data.get("counter", 0),
             statistics=Statistics(**data.get("statistics", {})),
         )

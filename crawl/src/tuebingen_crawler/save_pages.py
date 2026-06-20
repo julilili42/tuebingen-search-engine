@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-_PAGE_COLUMNS = """title, url, host, path, status_code, content_type,
-                   content_hash, fetched_at, indexed_at"""
+_PAGE_COLUMNS = """title, url, host, path, status_code, content_type, fetched_at, indexed_at"""
 
 
 @dataclass(frozen=True)
@@ -18,7 +17,6 @@ class PageRecord:
     path: Path
     status_code: int | None
     content_type: str | None
-    content_hash: str | None
     fetched_at: str
     indexed_at: str | None
 
@@ -56,7 +54,6 @@ class PageStore:
                 path TEXT NOT NULL,
                 status_code INTEGER,
                 content_type TEXT,
-                content_hash TEXT,
                 fetched_at TEXT NOT NULL,
                 indexed_at TEXT,
                 created_at TEXT NOT NULL,
@@ -105,7 +102,6 @@ class PageStore:
         path: str | Path,
         status_code: int | None = None,
         content_type: str | None = None,
-        content_hash: str | None = None,
         fetched_at: str | None = None,
     ) -> None:
         now = self._now()
@@ -121,20 +117,18 @@ class PageStore:
                     path,
                     status_code,
                     content_type,
-                    content_hash,
                     fetched_at,
                     indexed_at,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     title = excluded.title,
                     host = excluded.host,
                     path = excluded.path,
                     status_code = excluded.status_code,
                     content_type = excluded.content_type,
-                    content_hash = excluded.content_hash,
                     fetched_at = excluded.fetched_at,
                     updated_at = excluded.updated_at
                 """,
@@ -145,7 +139,6 @@ class PageStore:
                     str(path),
                     status_code,
                     content_type,
-                    content_hash,
                     fetched_at,
                     now,
                     now,
@@ -174,7 +167,6 @@ class PageStore:
             path=Path(row["path"]),
             status_code=row["status_code"],
             content_type=row["content_type"],
-            content_hash=row["content_hash"],
             fetched_at=row["fetched_at"],
             indexed_at=row["indexed_at"],
         )

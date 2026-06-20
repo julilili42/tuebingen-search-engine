@@ -30,8 +30,8 @@ PAGES = {
         '<a href="https://example.com/x">ext</a>',
     ),
     "/a": page('<a href="/b">B</a>', '<a href="/c">C</a>'),
-    "/b": page("leaf"),
-    "/c": page("leaf"),
+    "/b": page("leaf b"),
+    "/c": page("leaf c"),
 }
 
 
@@ -82,7 +82,7 @@ def make_site(**overrides) -> CrawlSite:
     return CrawlSite(**defaults)
 
 
-def run_crawl(client, tmp_path, page_store, seen=None, **site_overrides):
+def run_crawl(client, tmp_path, page_store, seen_urls=None, **site_overrides):
     return crawl_site(
         client=client,
         site=make_site(**site_overrides),
@@ -91,7 +91,7 @@ def run_crawl(client, tmp_path, page_store, seen=None, **site_overrides):
         page_store=page_store,
         robot_parser=allow_all_robots(),
         user_agent="TestCrawler/1.0",
-        seen=seen,
+        seen_urls=seen_urls,
     )
 
 
@@ -195,16 +195,16 @@ def test_shared_seen_prevents_refetch_across_seeds(client, tmp_path, page_store,
     # ein gemeinsames seen-Set über zwei Crawl-Läufe hinweg; getrennte save_dirs,
     # damit der zweite Lauf NICHT über den persistierten State resumt und so
     # wirklich nur der Effekt des geteilten seen-Sets getestet wird.
-    seen: set[str] = set()
+    seen_urls: set[str] = set()
 
-    run_crawl(client, tmp_path / "seed_a", page_store, seen=seen)
+    run_crawl(client, tmp_path / "seed_a", page_store, seen_urls=seen_urls)
     first_run_paths = list(requested_paths)
     requested_paths.clear()
 
     # zweiter Seed mit eigenem State, aber demselben seen. Nur der Seed-Root
     # wird immer neu in die Frontier gepusht; die entdeckten Kinder-Links
     # (/a, /b, /c) sind bereits im geteilten seen und werden nicht erneut geholt.
-    run_crawl(client, tmp_path / "seed_b", page_store, seen=seen)
+    run_crawl(client, tmp_path / "seed_b", page_store, seen_urls=seen_urls)
 
     assert sorted(first_run_paths) == ["/", "/a", "/b", "/c"]
     assert requested_paths == ["/"]  # nur der Root, keine Kinder-Refetches

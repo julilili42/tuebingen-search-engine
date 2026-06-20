@@ -37,7 +37,8 @@ def test_save_and_load_state_roundtrip(tmp_path):
     path = tmp_path / "state" / "crawl_state.json"
     state = CrawlState(
         frontier=[[-5.0, 1, "https://host/", 0], [-3.0, 2, "https://host/a", 1]],
-        seen={"https://host/", "https://host/a"},
+        seen_urls={"https://host/", "https://host/a"},
+        seen_texts={"hash-a", "hash-b"},
         counter=2,
         statistics=Statistics(fetched=1, discovered=2, failed=0, saved=1),
     )
@@ -83,7 +84,8 @@ def test_load_state_with_missing_keys_uses_defaults(tmp_path):
     assert ok
     assert state.frontier == [[-1.0, 1, "https://host/", 0]]
     assert state.counter == 0
-    assert state.seen == set()
+    assert state.seen_urls == set()
+    assert state.seen_texts == set()
     assert state.statistics == Statistics()
 
 

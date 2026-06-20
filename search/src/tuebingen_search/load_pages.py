@@ -13,7 +13,6 @@ class PageRecord:
     path: Path
     status_code: int | None
     content_type: str | None
-    content_hash: str | None
     fetched_at: str
     indexed_at: str | None
 
@@ -32,7 +31,6 @@ class PageLoad:
             path=Path(row["path"]),
             status_code=row["status_code"],
             content_type=row["content_type"],
-            content_hash=row["content_hash"],
             fetched_at=row["fetched_at"],
             indexed_at=row["indexed_at"],
         )
@@ -40,8 +38,7 @@ class PageLoad:
     def get_page_by_file_path(self, path: Path) -> PageRecord | None:
         row = self.con.execute(
             """
-            SELECT url, host, path, status_code, content_type,
-                   content_hash, fetched_at, indexed_at
+            SELECT url, host, path, status_code, content_type, fetched_at, indexed_at
             FROM pages
             WHERE path = ?
             """,
@@ -57,8 +54,7 @@ class PageLoad:
     def iter_html_pages(self) -> Iterator[PageRecord]:
         rows = self.con.execute(
             """
-            SELECT url, host, path, status_code, content_type,
-                content_hash, fetched_at, indexed_at
+            SELECT url, host, path, status_code, content_type, fetched_at, indexed_at
             FROM pages
             WHERE content_type IS NULL OR content_type LIKE 'text/html%'
             ORDER BY id

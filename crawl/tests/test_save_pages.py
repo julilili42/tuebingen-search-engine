@@ -15,7 +15,6 @@ def test_page_store_migrates_existing_db_without_title(tmp_path):
             path TEXT NOT NULL,
             status_code INTEGER,
             content_type TEXT,
-            content_hash TEXT,
             fetched_at TEXT NOT NULL,
             indexed_at TEXT,
             created_at TEXT NOT NULL,
@@ -26,10 +25,9 @@ def test_page_store_migrates_existing_db_without_title(tmp_path):
     con.execute(
         """
         INSERT INTO pages (
-            url, host, path, status_code, content_type, content_hash,
-            fetched_at, indexed_at, created_at, updated_at
+            url, host, path, status_code, content_type, fetched_at, indexed_at, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "https://host/",
@@ -37,7 +35,6 @@ def test_page_store_migrates_existing_db_without_title(tmp_path):
             str(tmp_path / "host" / "index.html"),
             200,
             "text/html",
-            "abc",
             "2026-01-01T00:00:00+00:00",
             None,
             "2026-01-01T00:00:00+00:00",
@@ -63,7 +60,6 @@ def test_page_store_upsert_persists_title(tmp_path):
             path=tmp_path / "host" / "index.html",
             status_code=200,
             content_type="text/html",
-            content_hash="abc",
         )
 
         [page] = list(store.iter_html_pages())

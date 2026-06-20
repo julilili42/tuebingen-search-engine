@@ -17,7 +17,6 @@ def make_page_load(db_path: Path, pages: dict[Path, str | None]) -> PageLoad:
             path TEXT NOT NULL,
             status_code INTEGER,
             content_type TEXT,
-            content_hash TEXT,
             fetched_at TEXT NOT NULL,
             indexed_at TEXT
         )
@@ -27,9 +26,9 @@ def make_page_load(db_path: Path, pages: dict[Path, str | None]) -> PageLoad:
         con.execute(
             """
             INSERT INTO pages (
-                url, host, path, status_code, content_type, content_hash, fetched_at, indexed_at
+                url, host, path, status_code, content_type, fetched_at, indexed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f"https://example.test/{path.name}",
@@ -37,7 +36,6 @@ def make_page_load(db_path: Path, pages: dict[Path, str | None]) -> PageLoad:
                 str(path),
                 200,
                 content_type,
-                None,
                 "2026-01-01T00:00:00Z",
                 None,
             ),
