@@ -36,8 +36,8 @@ class Statistics:
 class CrawlSite(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, str_strip_whitespace=True)
 
-    url: str = "https://www.tuepedia.de/"
-    max_pages: int = 100
+    url: str
+    max_pages: int | None = None
     request_timeout: float = 30.0
     retry_delay: float = 10.0
     request_delay: float = 0.01

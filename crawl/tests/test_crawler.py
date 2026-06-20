@@ -25,11 +25,11 @@ def page(*links: str) -> bytes:
 
 PAGES = {
     "/": page(
-        '<a href="/a">A</a>',
-        '<a href="/b">B</a>',
+        '<a href="/a">Tübingen A</a>',
+        '<a href="/b">Tübingen B</a>',
         '<a href="https://example.com/x">ext</a>',
     ),
-    "/a": page('<a href="/b">B</a>', '<a href="/c">C</a>'),
+    "/a": page('<a href="/b">Tübingen B</a>', '<a href="/c">Tübingen C</a>'),
     "/b": page("leaf b"),
     "/c": page("leaf c"),
 }
@@ -150,7 +150,7 @@ def test_crawl_site_updates_statistics(client, tmp_path, page_store):
 def test_crawl_site_counts_failed_fetches(tmp_path, page_store, requested_paths):
     # /missing returns 404 and exhausts its single retry
     pages = {
-        "/": page('<a href="/a">A</a>', '<a href="/missing">dead</a>'),
+        "/": page('<a href="/a">Tübingen A</a>', '<a href="/missing">Tübingen dead</a>'),
         "/a": page("leaf"),
     }
 

@@ -72,9 +72,9 @@ def crawl_site(
     state_path = generate_state_path(save_dir, hostname, canonical_start)
     state = load_or_create_state(state_path, canonical_start, seen_urls, seen_texts)
 
-    # crawling continues until the heap is empty or max_page is reached.
+    # crawling continues until the heap is empty or (optional) max_page is reached.
     while state.frontier:
-        if site.max_pages >= 0 and state.statistics.saved >= site.max_pages:
+        if site.max_pages and site.max_pages >= 0 and state.statistics.saved >= site.max_pages:
             break
 
         current_url, depth = pop_frontier(state)

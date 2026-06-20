@@ -29,7 +29,7 @@ def test_link_score_normalizes_parent_www_host():
     score = link_score(
         anchor="About",
         url="https://uni-tuebingen.de/about",
-        parent_relevance=3.0,
+        parent_relevance=heuristic.REL_THRESHOLD,
         parent_host="www.uni-tuebingen.de",
     )
 
