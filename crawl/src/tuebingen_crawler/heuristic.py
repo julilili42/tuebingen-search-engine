@@ -21,6 +21,10 @@ LINK_THRESHOLD = 4.0
 MAX_DEPTH = 5
 # semantic model may pull a lexically-relevant page down, strong lexical should not be dropped
 LEXICAL_FLOOR = 0.5
+# minimum semantic similarity to admit a page that has no lexical signal at all
+SEM_ADMIT = 0.7
+# relevance span granted to semantically admitted pages
+SEM_ADMIT_REL = 2.0
 
 
 TOKEN_RE = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
@@ -182,11 +186,17 @@ def evaluate_page(
     lang = detect_language(text, lang_attribute)
     lexical = relevance_score(url, title, text)
 
-    # lexical score is cheap
-    # use model only if threshold is passed
     if lexical > 0.0:
+        # known-relevant page: the model only refines the lexical score
         sim = topic_similarity(title, text)
         rel = lexical * (LEXICAL_FLOOR + (1.0 - LEXICAL_FLOOR) * sim)
+    elif lang is Language.EN:
+        # no lexical signal, model admits clearly on-topic english pages
+        sim = topic_similarity(title, text)
+        if sim >= SEM_ADMIT:
+            rel = REL_THRESHOLD + SEM_ADMIT_REL * (sim - SEM_ADMIT) / (1.0 - SEM_ADMIT)
+        else:
+            rel = 0.0
     else:
         rel = 0.0
 

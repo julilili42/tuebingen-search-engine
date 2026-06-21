@@ -149,11 +149,10 @@ _TUEBINGEN_BODY = (
 ) * 5
 
 
-def test_evaluate_page_skips_model_when_lexically_irrelevant(monkeypatch):
-    def fail_similarity(title, text):
-        raise AssertionError("model must not run on lexically irrelevant pages")
-
-    monkeypatch.setattr(heuristic, "topic_similarity", fail_similarity)
+def test_evaluate_page_rejects_offtopic_english_page(monkeypatch):
+    # an English page without a lexical signal is run through the model, but a
+    # low similarity keeps it out of the index.
+    monkeypatch.setattr(heuristic, "topic_similarity", lambda title, text: 0.3)
 
     verdict = evaluate_page(
         "https://example.com/czech", "Czech Republic", "A country in Europe. " * 10
@@ -188,3 +187,40 @@ def test_evaluate_page_model_can_demote_borderline_page_below_threshold(monkeypa
     verdict = evaluate_page("https://www.tuebingen.de/hotel-booking", "Booking", body, "en")
 
     assert 0.0 < verdict.relevance < heuristic.REL_THRESHOLD
+
+
+# --- semantic admission of pages without any lexical signal ------------------
+
+# a page with no "Tübingen"/named-entity term anywhere -> lexical score is 0
+_TOKENLESS_URL = "https://example.com/old-town"
+_TOKENLESS_BODY = "The old town has a market square, half-timbered houses and a castle. " * 5
+
+
+def test_evaluate_page_admits_tokenless_english_page_on_high_similarity(monkeypatch):
+    monkeypatch.setattr(heuristic, "topic_similarity", lambda title, text: 0.9)
+
+    verdict = evaluate_page(_TOKENLESS_URL, "Old Town", _TOKENLESS_BODY, "en")
+
+    assert verdict.relevance >= heuristic.REL_THRESHOLD
+    # stays below strong lexical hits
+    assert verdict.relevance <= heuristic.REL_THRESHOLD + heuristic.SEM_ADMIT_REL
+
+
+def test_evaluate_page_rejects_tokenless_english_page_on_low_similarity(monkeypatch):
+    monkeypatch.setattr(heuristic, "topic_similarity", lambda title, text: 0.4)
+
+    verdict = evaluate_page(_TOKENLESS_URL, "Old Town", _TOKENLESS_BODY, "en")
+
+    assert verdict.relevance == 0.0
+
+
+def test_evaluate_page_skips_model_for_tokenless_non_english_page(monkeypatch):
+    def fail_similarity(title, text):
+        raise AssertionError("model must not run on non-English pages without lexical signal")
+
+    monkeypatch.setattr(heuristic, "topic_similarity", fail_similarity)
+
+    # short body + lang attribute -> detected as German without loading stopwords
+    verdict = evaluate_page(_TOKENLESS_URL, "Altstadt", "Kurzer Text.", "de")
+
+    assert verdict.relevance == 0.0
