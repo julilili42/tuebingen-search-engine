@@ -1,103 +1,59 @@
 from __future__ import annotations
 
 import re
+import nltk
+from .urls import normalize_host
 from dataclasses import dataclass
 from enum import StrEnum
 from urllib.parse import urlparse
-
-import nltk
 from nltk.corpus import stopwords
-
-from .urls import normalize_host
 
 _STOPWORDS: tuple[set[str], set[str]] | None = None
 
-TUEBINGEN_TERMS: dict[str, float] = {
-      **dict.fromkeys([
-          "tübingen", "tuebingen", "tubingen", "universitätsstadt tübingen",
-          "city of tübingen",
-      ], 6.0),
-
-      **dict.fromkeys([
-          "stadt tübingen", "tübingen.de", "tuebingen.de", "landkreis tübingen",
-          "district of tübingen", "kreis tübingen", "rathaus tübingen",
-          "tourist information tübingen", "tübingen tourism", "tourismus tübingen",
-      ], 4.0),
-
-      **dict.fromkeys([
-          "university of tübingen", "universität tübingen",
-          "eberhard karls", "eberhard karls university",
-          "eberhard karls universität", "uni tübingen",
-          "universitätsklinikum tübingen", "university hospital tübingen",
-          "max planck tübingen", "max-planck-institut tübingen",
-          "cyber valley tübingen", "tübingen ai center", "ai center tübingen",
-      ], 4.0),
-
-      **dict.fromkeys([
-          "schloss hohentübingen", "hohentübingen", "hölderlin tower",
-          "hölderlinturm", "neckarfront", "stiftskirche tübingen",
-          "marktplatz tübingen", "old town tübingen", "altstadt tübingen",
-          "bebenhausen", "kloster bebenhausen", "bebenhausen monastery",
-          "kunsthalle tübingen", "stadtmuseum tübingen",
-          "botanischer garten tübingen", "botanical garden tübingen",
-      ], 3.5),
-
-      **dict.fromkeys([
-          "stocherkahn", "stocherkahnrennen", "chocolart",
-          "tübingen chocolart", "filmfest tübingen",
-          "französische filmtage tübingen", "arabisches filmfestival tübingen",
-          "landestheater tübingen", "ltt tübingen", "zimmertheater tübingen",
-          "sudhaus tübingen", "club voltaire tübingen", "arsenalkino tübingen",
-      ], 3.0),
-
-      **dict.fromkeys([
-          "lustnau", "derendingen", "waldhäuser ost", "who tübingen",
-          "weststadt tübingen", "südstadt tübingen", "innenstadt tübingen",
-          "unterjesingen", "hagelloch", "pfrondorf", "weilheim tübingen",
-          "kilchberg tübingen", "hirschau tübingen", "bebenhausen tübingen",
-      ], 2.0),
-
-      **dict.fromkeys([
-          "tübingen hauptbahnhof", "tübingen station", "tübingen hbf",
-          "zob tübingen", "naldo tübingen", "ammertalbahn", "neckar-alb-bahn",
-          "tigers tübingen", "sv 03 tübingen", "vhs tübingen",
-          "stadtbücherei tübingen", "universitätsbibliothek tübingen",
-      ], 2.5),
-  
-       **dict.fromkeys([                                                                                                                                          "restaurant", "restaurants", "cafe", "café", "coffee house", "bistro",
-       "biergarten", "beer garden", "brewery", "bakery", "pub", "tavern",
-       "wine bar", "weinstube", "hotel", "hostel", "guesthouse", "pension",
-        "things to do", "where to eat", "attractions", "sightseeing", "nightlife",
-        ], 1.5),
-
-      **dict.fromkeys([
-          "neckar-alb", "rottenburg am neckar", "reutlingen",
-      ], 1.0),
-
-      **dict.fromkeys([
-          "neckar", "am neckar", "neckar river",
-          "baden-württemberg", "baden wuerttemberg", "baden wurttemberg",
-      ], 0.6),
-
-      **dict.fromkeys([
-          "swabia", "schwaben", "swabian",
-      ], 0.3),
-  }
-
 # language detection reliable if >= 30 tokens
 MIN_TOKENS_FOR_LANG = 30
-# site is relevant
-REL_THRESHOLD = 4.0
+# site is relevant (tuned to the compact 0–18 relevance scale)
+REL_THRESHOLD = 3.0
 # link is added to frontier
 LINK_THRESHOLD = 4.0
 # link is ignored
 MAX_DEPTH = 5
 
-# tuebingen terms in url and title weight
-_TERM_IN_URL_WEIGHT = 5.0
-_TERM_IN_TITLE_WEIGHT = 3.0
 
 TOKEN_RE = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
+
+# SKIP
+# sites wich end in these suffixes
+RESOURCE_SUFFIXES = (
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
+    ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2",
+)
+# overview sites 
+SKIP_PATH_WORDS = {"category", "appendix", "talk"}
+
+# TÜBINGEN
+# multiple variants
+TUEBINGEN_RE = re.compile(r"t[üu]e?bingen", re.IGNORECASE)
+# relevant named entities without tübingen in it
+NAMED_ENTITIES = (
+    "bebenhausen", "neckarfront", "stocherkahn", "hölderlin",
+    "chocolart", "eberhard karls",
+    "lustnau", "derendingen", "unterjesingen", "hagelloch", "pfrondorf",
+    "cyber valley", "neckarinsel", "steinlach", "wurmlinger kapelle", 
+    "schwärzloch", "kupferbau", "wilhelmsstift"
+)
+
+# tuebingen terms in url and title score
+_TERM_IN_URL_SCORE = 5.0
+_TERM_IN_TITLE_SCORE = 3.0
+
+LINK_FEATURE_WEIGHTS: dict[str, float] = {
+    "anchor_has_tuebingen": 4.0,
+    "url_has_tuebingen": 3.0,
+    "parent_relevant": 2.0,
+    "internal_link": 1.0,
+}
+
 
 class Language(StrEnum):
     EN = "en"
@@ -121,30 +77,23 @@ class PageVerdict:
     def is_relevant(self) -> bool:
         return self.relevance >= REL_THRESHOLD
 
-def tokenize(text: str) -> list[str]:
-    return [t.lower() for t in TOKEN_RE.findall(text)]
-
-def check_nltk_stopwords() -> None:
+def _check_nltk_stopwords() -> None:
     try:
         stopwords.words("english")
         stopwords.words("german")
     except LookupError:
         nltk.download("stopwords")
 
-def load_stopwords() -> tuple[set[str], set[str]]:
-    global _STOPWORDS
+def _has_tuebingen(s: str) -> bool:
+    s = s.lower()
+    return bool(TUEBINGEN_RE.search(s)) or any(n in s for n in NAMED_ENTITIES)
 
-    if _STOPWORDS is None:
-        check_nltk_stopwords()
-        german_stopwords = set(stopwords.words("german"))
-        english_stopwords = set(stopwords.words("english"))
+def _tuebingen_hits(s: str) -> int:
+    s = s.lower()
+    return len(TUEBINGEN_RE.findall(s)) + sum(s.count(n) for n in NAMED_ENTITIES)
 
-        common = sorted(german_stopwords & english_stopwords)
-        english_stopwords.difference_update(common)
-        german_stopwords.difference_update(common)
-        _STOPWORDS = german_stopwords, english_stopwords
-
-    return _STOPWORDS
+def _tokenize(text: str) -> list[str]:
+    return [t.lower() for t in TOKEN_RE.findall(text)]
 
 def _host(url: str) -> str:
     try:
@@ -153,13 +102,42 @@ def _host(url: str) -> str:
         return ""
     return normalize_host(netloc)
 
+def _language_from_attribute(lang_attribute: str) -> Language:
+    lang = lang_attribute.lower()
+    if lang.startswith("en"):
+        return Language.EN
+    if lang.startswith("de"):
+        return Language.DE
+    return Language.UNKNOWN
+
+def _is_skipable(url: str) -> bool:
+    if url.lower().endswith(RESOURCE_SUFFIXES):
+        return True
+    path = urlparse(url).path.lower()
+    return any(kw in path for kw in SKIP_PATH_WORDS)
+
+def load_stopwords() -> tuple[set[str], set[str]]:
+    global _STOPWORDS
+
+    if _STOPWORDS is None:
+        _check_nltk_stopwords()
+        german_stopwords = set(stopwords.words("german"))
+        english_stopwords = set(stopwords.words("english"))
+
+        common = sorted(german_stopwords & english_stopwords)
+        english_stopwords.difference_update(common)
+        german_stopwords.difference_update(common)
+        _STOPWORDS = german_stopwords, english_stopwords
+        
+    return _STOPWORDS
+
 # POST FETCH
 def detect_language(text: str, lang_attribute: str | None = None) -> Language:
-    tokens = tokenize(text)
+    tokens = _tokenize(text)
 
     if len(tokens) < MIN_TOKENS_FOR_LANG:
         if lang_attribute:
-            return language_from_attribute(lang_attribute)
+            return _language_from_attribute(lang_attribute)
         return Language.UNKNOWN
 
     german_stopwords, english_stopwords = load_stopwords()
@@ -173,35 +151,23 @@ def detect_language(text: str, lang_attribute: str | None = None) -> Language:
 
     # use <html lang="..."> as tiebreaker
     if lang_attribute:
-        return language_from_attribute(lang_attribute)
-    return Language.UNKNOWN
-
-def language_from_attribute(lang_attribute: str) -> Language:
-    lang = lang_attribute.lower()
-    if lang.startswith("en"):
-        return Language.EN
-    if lang.startswith("de"):
-        return Language.DE
+        return _language_from_attribute(lang_attribute)
     return Language.UNKNOWN
 
 def relevance_score(url: str, title: str, text: str) -> float:
-    url, title, text = url.lower(), title.lower(), text.lower()
-    n_tokens = max(len(tokenize(text)), 1)
+    if not (_has_tuebingen(url) or _has_tuebingen(title) or _has_tuebingen(text)):
+        return 0.0
 
+    # score uses the full signal
+    # (regex + named entities) in url, title and body
     score = 0.0
-    for term, weight in TUEBINGEN_TERMS.items():
-        # url and title significantly increase the score
-        # if they contain terms related to tuebingen
-        if term in url:
-            score += weight * _TERM_IN_URL_WEIGHT
-        if term in title:
-            score += weight * _TERM_IN_TITLE_WEIGHT
+    if _has_tuebingen(url):
+        score += _TERM_IN_URL_SCORE
+    if _has_tuebingen(title):
+        score += _TERM_IN_TITLE_SCORE
 
-        # calculate score based on term weight and term frequency in the body
-        # matches on terms exactly: "tourist information tübingen tourist" -> len(...) = 1
-        term_frequency = len(re.findall(rf"\b{re.escape(term)}\b", text))
-        if term_frequency:
-            score += weight * min(term_frequency / n_tokens * 1000.0, 5.0)
+    score += min(_tuebingen_hits(text), 10)
+
     return score
 
 def evaluate_page(
@@ -218,41 +184,18 @@ def evaluate_page(
     )
 
 # PRE FETCH
-LINK_FEATURE_WEIGHTS: dict[str, float] = {
-    "anchor_has_tuebingen": 4.0,
-    "url_has_tuebingen": 3.0,
-    "parent_relevant": 2.0,
-    "internal_link": 1.0,
-}
-
-# skip sites wich end in these suffixes
-RESOURCE_SUFFIXES = (
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
-    ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2",
-)
-
-# skip overview sites 
-SKIP_PATH_WORDS = {"category", "appendix", "talk"}
-
-def is_skipable(url: str) -> bool:
-    if url.lower().endswith(RESOURCE_SUFFIXES):
-        return True
-    path = urlparse(url).path.lower()
-    return any(kw in path for kw in SKIP_PATH_WORDS)
-
 def link_score(
     anchor: str,
     url: str,
     parent_relevance: float,
     parent_host: str,
 ) -> float:
-    if is_skipable(url):
+    if _is_skipable(url):
         return 0.0
-
-    anchor_l, url_l = anchor.lower(), url.lower()
+    
     features = {
-        "anchor_has_tuebingen": any(t in anchor_l for t in TUEBINGEN_TERMS),
-        "url_has_tuebingen": any(t in url_l for t in TUEBINGEN_TERMS),
+        "anchor_has_tuebingen": _has_tuebingen(anchor),
+        "url_has_tuebingen": _has_tuebingen(url),
         "parent_relevant": parent_relevance >= REL_THRESHOLD,
         "internal_link": _host(url) == normalize_host(parent_host),
     }

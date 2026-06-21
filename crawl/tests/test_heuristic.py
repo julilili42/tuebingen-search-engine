@@ -67,3 +67,74 @@ def test_link_score_still_uses_tuebingen_terms_in_url():
     )
 
     assert score == heuristic.LINK_FEATURE_WEIGHTS["url_has_tuebingen"]
+
+
+# --- topic-drift regression tests -------------------------------------------
+
+def test_relevance_substring_pub_in_republic_does_not_count():
+    # "pub" must not match inside "Republic"/"Public"; without a core Tübingen
+    # term the page is not relevant at all.
+    body = "The Czech Republic is a country in central Europe with many pubs. " * 5
+    assert heuristic.relevance_score(
+        "https://en.wikipedia.org/wiki/Czech_Republic", "Czech Republic", body
+    ) == 0.0
+
+
+def test_relevance_generic_terms_alone_do_not_qualify():
+    body = ("This list ranks restaurants and hotels. Restaurant, restaurant, "
+            "hotel, cafe, bistro, brewery, pub. ") * 10
+    assert heuristic.relevance_score(
+        "https://en.wikipedia.org/wiki/List_of_restaurants",
+        "List of Michelin-starred restaurants", body,
+    ) == 0.0
+
+
+def test_relevance_keeps_real_tuebingen_page():
+    body = ("Tübingen is a university town on the river Neckar. The old town of "
+            "Tübingen and the university of Tübingen attract many visitors. ") * 5
+    score = heuristic.relevance_score(
+        "https://en.wikipedia.org/wiki/T%C3%BCbingen", "Tübingen", body
+    )
+    assert score >= heuristic.REL_THRESHOLD
+
+
+def test_relevance_named_entity_without_word_tuebingen_qualifies():
+    # Bebenhausen is a Tübingen district; should qualify via the named-core list.
+    body = ("Bebenhausen Abbey is a former Cistercian monastery near the town. "
+            "The Bebenhausen monastery is a popular destination. ") * 5
+    score = heuristic.relevance_score(
+        "https://en.wikipedia.org/wiki/Bebenhausen_Abbey", "Bebenhausen Abbey", body
+    )
+    assert score >= heuristic.REL_THRESHOLD
+
+
+def test_relevance_title_only_match_qualifies():
+    # a page titled about Tübingen counts even with a neutral body (recall)
+    body = "A museum showing art, coins and prehistoric artefacts to its visitors. " * 5
+    score = heuristic.relevance_score(
+        "https://example.com/museum", "Tübingen City Museum", body
+    )
+    assert score >= heuristic.REL_THRESHOLD
+
+
+def test_relevance_single_incidental_mention_is_filtered():
+    # one passing mention of Tübingen in an otherwise off-topic page is too weak
+    body = ("This article is about German universities in general. "
+            "Heidelberg, Munich and Tübingen are mentioned once. ") + (
+            "Universities educate students across many disciplines. " * 30)
+    score = heuristic.relevance_score(
+        "https://example.com/german-universities", "German universities", body
+    )
+    assert score < heuristic.REL_THRESHOLD
+
+
+def test_link_score_does_not_chase_republic_url():
+    # /Czech_Republic with a generic anchor gains no tuebingen url/anchor bonus.
+    score = link_score(
+        anchor="Czech Republic",
+        url="https://en.wikipedia.org/wiki/Czech_Republic",
+        parent_relevance=0.0,
+        parent_host="en.wikipedia.org",
+    )
+    # only the internal_link feature may apply, never the tuebingen features
+    assert score <= heuristic.LINK_FEATURE_WEIGHTS["internal_link"]

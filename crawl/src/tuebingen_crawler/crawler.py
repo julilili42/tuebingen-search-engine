@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import httpx
+from urllib.robotparser import RobotFileParser
+from urllib.parse import urlparse
 from pathlib import Path
 from .models import CrawlState, Config, CrawlSite
 from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state, save_html
@@ -11,10 +14,6 @@ from .heuristic import evaluate_page, link_score, should_enqueue
 from .save_pages import PageStore
 from .frontier import push_frontier, pop_frontier
 from .dedup import simhash, is_near_duplicate
-import httpx
-from urllib.robotparser import RobotFileParser
-from urllib.parse import urlparse
-
 
 logger = logging.getLogger(__name__)
 
