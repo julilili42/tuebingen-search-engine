@@ -16,10 +16,12 @@ def test_link_score_normalizes_parent_www_host():
         parent_host="www.uni-tuebingen.de",
     )
 
+    # url cue + internal-link cue + the inherited parent term; at
+    # parent_relevance == REL_THRESHOLD and depth 0 that term equals parent weight.
     expected = (
         LINK_CONFIG.feature_weights["url_has_tuebingen"]
-        + LINK_CONFIG.feature_weights["parent_relevant"]
         + LINK_CONFIG.feature_weights["internal_link"]
+        + LINK_CONFIG.parent_relevance.weight
     )
     assert score == expected
 
@@ -72,6 +74,21 @@ def test_link_score_skips_resource_urls():
         parent_host="www.tuebingen.de",
     )
     assert score == 0.0
+
+
+def test_link_score_strong_parent_lifts_generic_internal_link():
+    # a generic internal link (no tübingen cue in anchor or url) is worth following
+    # from a strongly relevant parent, but not from a barely-relevant one.
+    url = "https://example.org/research/some-institute"
+    strong = link_score(
+        "Read more", url, parent_relevance=15.0, parent_host="example.org", depth=1
+    )
+    weak = link_score(
+        "Read more", url, parent_relevance=REL_THRESHOLD, parent_host="example.org", depth=1
+    )
+
+    assert strong >= FRONTIER_CONFIG.threshold
+    assert weak < FRONTIER_CONFIG.threshold
 
 
 def test_link_verdict_enqueue_respects_threshold_and_depth():

@@ -163,19 +163,6 @@ def crawl_site(
             state.statistics.saved += 1
             host_counts[hostname] = host_counts.get(hostname, 0) + 1
 
-            # page is kept therefore eval. of all links on current url
-            # add relevant urls to the frontier
-            evaluate_links(
-                state=state,
-                links=page.links,
-                current_url=current_url,
-                depth=depth,
-                parent_relevance=verdict.relevance,
-                parent_host=hostname,
-                host_counts=host_counts,
-                max_pages_per_host=max_pages_per_host,
-            )
-
             logger.info(
                 "%-7s | %3d | rel=%5.1f | %s",
                 "SAVED",
@@ -191,6 +178,18 @@ def crawl_site(
                 verdict.language,
                 current_url,
             )
+
+        # discovery runs for every relevant page
+        evaluate_links(
+            state=state,
+            links=page.links,
+            current_url=current_url,
+            depth=depth,
+            parent_relevance=verdict.relevance,
+            parent_host=hostname,
+            host_counts=host_counts,
+            max_pages_per_host=max_pages_per_host,
+        )
 
         maybe_save_state(save_state_every, state_path, state)
 
@@ -223,11 +222,11 @@ def evaluate_links(
             host_counts, max_pages_per_host, host
         ):
             push_frontier(state, verdict.score, final_url, child_depth)
+            # only mark URLs we actually enqueued as seen; a sub-threshold or
+            # host-capped link stays eligible to be reached from a stronger parent.
+            state.seen_urls.add(final_url)
 
-        state.seen_urls.add(final_url)
-
-# caps the number of sites per hostname
-# goal is to increase entropy by forcing a limit on the crawler
+# caps the number of sites per hostname: goal is to increase entropy by forcing a limit on the crawler
 def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
     return max_pages_per_host is not None and host_counts.get(host, 0) >= max_pages_per_host
 

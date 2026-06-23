@@ -13,6 +13,15 @@ class FrontierConfig:
     max_depth: int = 5
 
 @dataclass(frozen=True)
+class ParentRelevanceConfig:
+    # continuous inheritance of the parent page's relevance
+    weight: float = 1.0
+    # cap on parent_relevance so one very strong page cannot dominate
+    cap: float = 4.0
+    # inherited pull fades with crawl depth
+    depth_decay: float = 0.85
+
+@dataclass(frozen=True)
 class LinkScoringConfig:
     # sites which end in these suffixes
     resource_suffixes: tuple[str, ...] = (
@@ -26,13 +35,13 @@ class LinkScoringConfig:
         "talk",
         "special:",
     })
-    # weights are experimentally chosen
+    # explicit lexical/structural cue weights (experimentally chosen)
     feature_weights: dict[str, float] = field(default_factory=lambda: {
         "anchor_has_tuebingen": 4.0,
         "url_has_tuebingen": 3.0,
-        "parent_relevant": 2.0,
         "internal_link": 1.0,
     })
+    parent_relevance: ParentRelevanceConfig = field(default_factory=ParentRelevanceConfig)
 
 FRONTIER_CONFIG = FrontierConfig()
 LINK_CONFIG = LinkScoringConfig()
@@ -49,7 +58,6 @@ class LinkVerdict:
             self.score >= FRONTIER_CONFIG.threshold
             and self.depth <= FRONTIER_CONFIG.max_depth
         )
-
 
 def _host(url: str) -> str:
     try:
@@ -69,17 +77,26 @@ def link_score(
     url: str,
     parent_relevance: float,
     parent_host: str,
+    depth: int = 0,
 ) -> float:
     if _is_skipable(url):
         return 0.0
 
-    features = {
-        "anchor_has_tuebingen": has_tuebingen(anchor),
-        "url_has_tuebingen": has_tuebingen(url),
-        "parent_relevant": parent_relevance >= REL_THRESHOLD,
-        "internal_link": _host(url) == normalize_host(parent_host),
-    }
-    return sum(w for name, w in LINK_CONFIG.feature_weights.items() if features[name])
+    weights = LINK_CONFIG.feature_weights
+    score = 0.0
+    if has_tuebingen(anchor):
+        score += weights["anchor_has_tuebingen"]
+    if has_tuebingen(url):
+        score += weights["url_has_tuebingen"]
+    if _host(url) == normalize_host(parent_host):
+        score += weights["internal_link"]
+
+    # depth decayed inheritance of the parents relevance
+    parent = LINK_CONFIG.parent_relevance
+    rel_norm = min(parent_relevance / REL_THRESHOLD, parent.cap)
+    score += parent.weight * rel_norm * (parent.depth_decay ** depth)
+
+    return score
 
 def classify_link(
     anchor: str,
@@ -88,5 +105,5 @@ def classify_link(
     parent_host: str,
     depth: int,
 ) -> LinkVerdict:
-    score = link_score(anchor, url, parent_relevance, parent_host)
+    score = link_score(anchor, url, parent_relevance, parent_host, depth)
     return LinkVerdict(url=url, score=score, depth=depth)

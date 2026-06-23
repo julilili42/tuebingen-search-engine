@@ -4,6 +4,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 import pytest
 
+import tuebingen_crawler.page_classifier as page_classifier
 from tuebingen_crawler.crawler import crawl_site, evaluate_links
 from tuebingen_crawler.models import CrawlSite, CrawlState
 from tuebingen_crawler.save_pages import PageStore
@@ -186,7 +187,8 @@ def test_evaluate_links_skips_enqueue_for_capped_host():
     )
 
     assert state.frontier == []
-    assert "https://host/a" in state.seen_urls
+    # capped -> not enqueued -> not marked seen, so a stronger parent can retry later
+    assert "https://host/a" not in state.seen_urls
 
 
 def test_evaluate_links_enqueues_below_cap():
@@ -277,3 +279,27 @@ def test_shared_seen_prevents_refetch_across_seeds(client, tmp_path, page_store,
 
     assert sorted(first_run_paths) == ["/", "/a", "/b", "/c"]
     assert requested_paths == ["/"]  # nur der Root, keine Kinder-Refetches
+
+
+def test_crawl_site_follows_links_from_relevant_non_english_page(
+    tmp_path, page_store, requested_paths, monkeypatch
+):
+    # relevante, aber deutsche Hub-Seite: NICHT indexiert (EN-only), ihre Links
+    # werden aber trotzdem verfolgt -> die verlinkte englische Seite landet im Index.
+    monkeypatch.setattr(page_classifier, "topic_similarity", lambda title, text: 1.0)
+
+    de_root = (
+        '<html lang="de"><title>Tübingen</title>'
+        "Die Universitätsstadt Tübingen liegt am Neckar. Tübingen ist alt. "
+        '<a href="/en">Tübingen in English</a>'
+    ).encode("utf-8")
+    pages = {"/": de_root, "/en": page("leaf en")}
+
+    with make_client(pages, requested_paths) as client:
+        run_crawl(client, tmp_path, page_store)
+
+    # die deutsche Wurzel ist relevant, wird aber nicht gespeichert ...
+    assert "https://host/" not in stored_urls(page_store)
+    # ... ihr Link wurde dennoch verfolgt und die englische Kindseite indexiert
+    assert "https://host/en" in stored_urls(page_store)
+    assert "/en" in requested_paths

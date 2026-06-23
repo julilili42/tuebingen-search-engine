@@ -17,3 +17,13 @@ request_delay = 0.5
 url = "https://is.mpg.de/"
 max_pages_per_seed = 1000
 request_delay = 0.5
+
+[[sites]]
+url = "https://uni-tuebingen.de/en/"
+max_pages_per_seed = 1000
+request_delay = 0.5
+
+[[sites]]
+url = "https://www.germany.travel/en/cities-culture/tuebingen.html"
+max_pages_per_seed = 1000
+request_delay = 0.5
