@@ -11,8 +11,9 @@ def test_generate_state_path_is_deterministic(tmp_path):
     first = generate_state_path(tmp_path, "www.tuepedia.de", "https://www.tuepedia.de/")
     second = generate_state_path(tmp_path, "www.tuepedia.de", "https://www.tuepedia.de/")
     assert first == second
-    assert first.parent == tmp_path / "tuepedia.de"
+    assert first.parent == tmp_path / "state"
     assert first.name.startswith("crawl_state-")
+    assert "tuepedia.de" in first.name
     assert first.suffix == ".json"
 
 
@@ -20,6 +21,13 @@ def test_generate_state_path_differs_per_start_url(tmp_path):
     first = generate_state_path(tmp_path, "host", "https://host/a")
     second = generate_state_path(tmp_path, "host", "https://host/b")
     assert first != second
+
+
+def test_generate_state_path_differs_per_host(tmp_path):
+    first = generate_state_path(tmp_path, "alpha.example", "https://alpha.example/a")
+    second = generate_state_path(tmp_path, "beta.example", "https://beta.example/a")
+    assert first != second
+    assert first.parent == second.parent == tmp_path / "state"
 
 
 def test_save_html_writes_file_under_normalized_hostname(tmp_path):

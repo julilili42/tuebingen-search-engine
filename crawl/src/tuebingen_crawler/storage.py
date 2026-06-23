@@ -82,10 +82,11 @@ def load_seed_toml(path: Path) -> list[CrawlSite]:
         return []
 
 
-# creates unique state path, s.t. multiple hostnames can be distinguished
+# creates unique state path outside host HTML directories
 def generate_state_path(save_dir: Path, host: str, canonical_start_url: str) -> Path:
+    normalized_host = normalize_host(host)
     digest = hashlib.sha256(canonical_start_url.encode("utf-8")).hexdigest()[:12]
-    return save_dir / normalize_host(host) / f"crawl_state-{digest}.json"
+    return save_dir / "state" / f"crawl_state-{normalized_host}-{digest}.json"
 
 
 # saving of crawling progress dependend on save_state_every, wrapper around `save_state`
