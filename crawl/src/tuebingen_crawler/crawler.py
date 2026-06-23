@@ -18,11 +18,6 @@ from .dedup import simhash, is_near_duplicate
 
 logger = logging.getLogger(__name__)
 
-# caps the number of sites per hostname
-# goal is to increase entropy by forcing a limit on the crawler
-def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
-    return max_pages_per_host is not None and host_counts.get(host, 0) >= max_pages_per_host
-
 # crawls hostnames defined in seed.toml
 def crawl_hostname(config: Config, page_store: PageStore) -> None:
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
@@ -231,6 +226,10 @@ def evaluate_links(
 
         state.seen_urls.add(final_url)
 
+# caps the number of sites per hostname
+# goal is to increase entropy by forcing a limit on the crawler
+def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
+    return max_pages_per_host is not None and host_counts.get(host, 0) >= max_pages_per_host
 
 # load intermediate state or start a new one
 def load_or_create_state(

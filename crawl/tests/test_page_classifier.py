@@ -1,11 +1,10 @@
 import tuebingen_crawler.page_classifier as page_classifier
 from tuebingen_crawler.models import Language, REL_THRESHOLD
 from tuebingen_crawler.page_classifier import (
-    LEXICAL_FLOOR,
-    SEM_ADMIT_REL,
+    SEMANTIC_CONFIG,
     classify_page,
     detect_language,
-    relevance_score,
+    lexical_relevance_score,
 )
 
 
@@ -46,58 +45,58 @@ def test_detect_language_trusts_non_english_lang_attribute(monkeypatch):
 
 # --- topic-drift regression tests -------------------------------------------
 
-def test_relevance_substring_pub_in_republic_does_not_count():
+def test_lexical_relevance_substring_pub_in_republic_does_not_count():
     # "pub" must not match inside "Republic"/"Public"; without a core Tübingen
     # term the page is not relevant at all.
     body = "The Czech Republic is a country in central Europe with many pubs. " * 5
-    assert relevance_score(
+    assert lexical_relevance_score(
         "https://en.wikipedia.org/wiki/Czech_Republic", "Czech Republic", body
     ) == 0.0
 
 
-def test_relevance_generic_terms_alone_do_not_qualify():
+def test_lexical_relevance_generic_terms_alone_do_not_qualify():
     body = ("This list ranks restaurants and hotels. Restaurant, restaurant, "
             "hotel, cafe, bistro, brewery, pub. ") * 10
-    assert relevance_score(
+    assert lexical_relevance_score(
         "https://en.wikipedia.org/wiki/List_of_restaurants",
         "List of Michelin-starred restaurants", body,
     ) == 0.0
 
 
-def test_relevance_keeps_real_tuebingen_page():
+def test_lexical_relevance_keeps_real_tuebingen_page():
     body = ("Tübingen is a university town on the river Neckar. The old town of "
             "Tübingen and the university of Tübingen attract many visitors. ") * 5
-    score = relevance_score(
+    score = lexical_relevance_score(
         "https://en.wikipedia.org/wiki/T%C3%BCbingen", "Tübingen", body
     )
     assert score >= REL_THRESHOLD
 
 
-def test_relevance_named_entity_without_word_tuebingen_qualifies():
+def test_lexical_relevance_named_entity_without_word_tuebingen_qualifies():
     # Bebenhausen is a Tübingen district; should qualify via the named-core list.
     body = ("Bebenhausen Abbey is a former Cistercian monastery near the town. "
             "The Bebenhausen monastery is a popular destination. ") * 5
-    score = relevance_score(
+    score = lexical_relevance_score(
         "https://en.wikipedia.org/wiki/Bebenhausen_Abbey", "Bebenhausen Abbey", body
     )
     assert score >= REL_THRESHOLD
 
 
-def test_relevance_title_only_match_qualifies():
+def test_lexical_relevance_title_only_match_qualifies():
     # a page titled about Tübingen counts even with a neutral body (recall)
     body = "A museum showing art, coins and prehistoric artefacts to its visitors. " * 5
-    score = relevance_score(
+    score = lexical_relevance_score(
         "https://example.com/museum", "Tübingen City Museum", body
     )
     assert score >= REL_THRESHOLD
 
 
-def test_relevance_single_incidental_mention_is_filtered():
+def test_lexical_relevance_single_incidental_mention_is_filtered():
     # one passing mention of Tübingen in an otherwise off-topic page is too weak
     body = ("This article is about German universities in general. "
             "Heidelberg, Munich and Tübingen are mentioned once. ") + (
             "Universities educate students across many disciplines. " * 30)
-    score = relevance_score(
+    score = lexical_relevance_score(
         "https://example.com/german-universities", "German universities", body
     )
     assert score < REL_THRESHOLD
@@ -126,7 +125,7 @@ def test_classify_page_rejects_offtopic_english_page(monkeypatch):
 def test_classify_page_high_similarity_keeps_lexical_score(monkeypatch):
     monkeypatch.setattr(page_classifier, "topic_similarity", lambda title, text: 1.0)
 
-    lexical = relevance_score(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY)
+    lexical = lexical_relevance_score(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY)
     verdict = classify_page(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY, "en")
 
     assert verdict.relevance == lexical
@@ -135,10 +134,10 @@ def test_classify_page_high_similarity_keeps_lexical_score(monkeypatch):
 def test_classify_page_low_similarity_demotes_to_floor(monkeypatch):
     monkeypatch.setattr(page_classifier, "topic_similarity", lambda title, text: 0.0)
 
-    lexical = relevance_score(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY)
+    lexical = lexical_relevance_score(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY)
     verdict = classify_page(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY, "en")
 
-    assert verdict.relevance == lexical * LEXICAL_FLOOR
+    assert verdict.relevance == lexical * SEMANTIC_CONFIG.lexical_floor
 
 
 def test_classify_page_model_can_demote_borderline_page_below_threshold(monkeypatch):
@@ -166,7 +165,7 @@ def test_classify_page_admits_tokenless_english_page_on_high_similarity(monkeypa
 
     assert verdict.relevance >= REL_THRESHOLD
     # stays below strong lexical hits
-    assert verdict.relevance <= REL_THRESHOLD + SEM_ADMIT_REL
+    assert verdict.relevance <= REL_THRESHOLD + SEMANTIC_CONFIG.admit_span
 
 
 def test_classify_page_rejects_tokenless_english_page_on_low_similarity(monkeypatch):

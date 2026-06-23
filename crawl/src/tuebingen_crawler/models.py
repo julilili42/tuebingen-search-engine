@@ -14,29 +14,6 @@ class Language(StrEnum):
 # score at which a page is relevant
 REL_THRESHOLD = 3.0
 
-@dataclass(frozen=True)
-class PageVerdict:
-    language: Language
-    relevance: float
-
-    @property
-    def keep(self) -> bool:
-        return self.is_english and self.is_relevant
-
-    @property
-    def is_english(self) -> bool:
-        return self.language is Language.EN
-
-    @property
-    def is_relevant(self) -> bool:
-        return self.relevance >= REL_THRESHOLD
-
-@dataclass(frozen=True)
-class LinkVerdict:
-    url: str
-    score: float
-    enqueue: bool
-
 @dataclass
 class FetchResult:
     body: bytes | None

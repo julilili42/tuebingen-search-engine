@@ -1,10 +1,9 @@
 from tuebingen_crawler.link_classifier import (
-    LINK_FEATURE_WEIGHTS,
-    LINK_THRESHOLD,
-    MAX_DEPTH,
+    FRONTIER_CONFIG,
+    LINK_CONFIG,
+    LinkVerdict,
     classify_link,
     link_score,
-    should_enqueue,
 )
 from tuebingen_crawler.models import REL_THRESHOLD
 
@@ -18,9 +17,9 @@ def test_link_score_normalizes_parent_www_host():
     )
 
     expected = (
-        LINK_FEATURE_WEIGHTS["url_has_tuebingen"]
-        + LINK_FEATURE_WEIGHTS["parent_relevant"]
-        + LINK_FEATURE_WEIGHTS["internal_link"]
+        LINK_CONFIG.feature_weights["url_has_tuebingen"]
+        + LINK_CONFIG.feature_weights["parent_relevant"]
+        + LINK_CONFIG.feature_weights["internal_link"]
     )
     assert score == expected
 
@@ -50,7 +49,7 @@ def test_link_score_still_uses_tuebingen_terms_in_url():
         parent_host="example.com",
     )
 
-    assert score == LINK_FEATURE_WEIGHTS["url_has_tuebingen"]
+    assert score == LINK_CONFIG.feature_weights["url_has_tuebingen"]
 
 
 def test_link_score_does_not_chase_republic_url():
@@ -62,7 +61,7 @@ def test_link_score_does_not_chase_republic_url():
         parent_host="en.wikipedia.org",
     )
     # only the internal_link feature may apply, never the tuebingen features
-    assert score <= LINK_FEATURE_WEIGHTS["internal_link"]
+    assert score <= LINK_CONFIG.feature_weights["internal_link"]
 
 
 def test_link_score_skips_resource_urls():
@@ -75,10 +74,22 @@ def test_link_score_skips_resource_urls():
     assert score == 0.0
 
 
-def test_should_enqueue_respects_threshold_and_depth():
-    assert should_enqueue(LINK_THRESHOLD, MAX_DEPTH)
-    assert not should_enqueue(LINK_THRESHOLD - 0.1, 1)
-    assert not should_enqueue(LINK_THRESHOLD, MAX_DEPTH + 1)
+def test_link_verdict_enqueue_respects_threshold_and_depth():
+    assert LinkVerdict(
+        url="https://example.com",
+        score=FRONTIER_CONFIG.threshold,
+        depth=FRONTIER_CONFIG.max_depth,
+    ).enqueue
+    assert not LinkVerdict(
+        url="https://example.com",
+        score=FRONTIER_CONFIG.threshold - 0.1,
+        depth=1,
+    ).enqueue
+    assert not LinkVerdict(
+        url="https://example.com",
+        score=FRONTIER_CONFIG.threshold,
+        depth=FRONTIER_CONFIG.max_depth + 1,
+    ).enqueue
 
 
 def test_classify_link_enqueues_relevant_link():
@@ -91,7 +102,7 @@ def test_classify_link_enqueues_relevant_link():
     )
 
     assert verdict.url == "https://uni-tuebingen.de/tuebingen-attractions"
-    assert verdict.score >= LINK_THRESHOLD
+    assert verdict.score >= FRONTIER_CONFIG.threshold
     assert verdict.enqueue
 
 
@@ -114,8 +125,8 @@ def test_classify_link_rejects_too_deep_link():
         url="https://uni-tuebingen.de/tuebingen-attractions",
         parent_relevance=REL_THRESHOLD,
         parent_host="uni-tuebingen.de",
-        depth=MAX_DEPTH + 1,
+        depth=FRONTIER_CONFIG.max_depth + 1,
     )
 
-    assert verdict.score >= LINK_THRESHOLD
+    assert verdict.score >= FRONTIER_CONFIG.threshold
     assert not verdict.enqueue

@@ -1,31 +1,55 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from .models import LinkVerdict, REL_THRESHOLD
+from .models import REL_THRESHOLD
 from .tuebingen_terms import has_tuebingen
 from .urls import normalize_host
 
-# link is added to frontier
-LINK_THRESHOLD = 4.0
-# link is ignored
-MAX_DEPTH = 5
+@dataclass(frozen=True)
+class FrontierConfig:
+    threshold: float = 4.0
+    max_depth: int = 5
 
-# sites which end in these suffixes
-RESOURCE_SUFFIXES = (
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
-    ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2", ".webp"
-)
-# overview sites will be skipped
-SKIP_PATH_WORDS = {"category", "appendix", "talk", "special:"}
+@dataclass(frozen=True)
+class LinkScoringConfig:
+    # sites which end in these suffixes
+    resource_suffixes: tuple[str, ...] = (
+        ".jpg", ".jpeg", ".png", ".gif", ".svg", ".css", ".js",
+        ".pdf", ".zip", ".mp4", ".mp3", ".ico", ".woff", ".woff2", ".webp"
+    )
+    # overview sites will be skipped
+    skip_path_words: frozenset[str] = frozenset({
+        "category",
+        "appendix",
+        "talk",
+        "special:",
+    })
+    # weights are experimentally chosen
+    feature_weights: dict[str, float] = field(default_factory=lambda: {
+        "anchor_has_tuebingen": 4.0,
+        "url_has_tuebingen": 3.0,
+        "parent_relevant": 2.0,
+        "internal_link": 1.0,
+    })
 
-# weights are experimentally choose 
-LINK_FEATURE_WEIGHTS: dict[str, float] = {
-    "anchor_has_tuebingen": 4.0,
-    "url_has_tuebingen": 3.0,
-    "parent_relevant": 2.0,
-    "internal_link": 1.0,
-}
+FRONTIER_CONFIG = FrontierConfig()
+LINK_CONFIG = LinkScoringConfig()
+
+@dataclass(frozen=True)
+class LinkVerdict:
+    url: str
+    score: float
+    depth: int
+
+    @property
+    def enqueue(self) -> bool:
+        return (
+            self.score >= FRONTIER_CONFIG.threshold
+            and self.depth <= FRONTIER_CONFIG.max_depth
+        )
+
 
 def _host(url: str) -> str:
     try:
@@ -35,18 +59,10 @@ def _host(url: str) -> str:
     return normalize_host(netloc)
 
 def _is_skipable(url: str) -> bool:
-    if url.lower().endswith(RESOURCE_SUFFIXES):
+    if url.lower().endswith(LINK_CONFIG.resource_suffixes):
         return True
     path = urlparse(url).path.lower()
-    return any(kw in path for kw in SKIP_PATH_WORDS)
-
-def should_enqueue(
-    score: float,
-    depth: int,
-    threshold: float = LINK_THRESHOLD,
-    max_depth: int = MAX_DEPTH,
-) -> bool:
-    return score >= threshold and depth <= max_depth
+    return any(kw in path for kw in LINK_CONFIG.skip_path_words)
 
 def link_score(
     anchor: str,
@@ -63,7 +79,7 @@ def link_score(
         "parent_relevant": parent_relevance >= REL_THRESHOLD,
         "internal_link": _host(url) == normalize_host(parent_host),
     }
-    return sum(w for name, w in LINK_FEATURE_WEIGHTS.items() if features[name])
+    return sum(w for name, w in LINK_CONFIG.feature_weights.items() if features[name])
 
 def classify_link(
     anchor: str,
@@ -73,4 +89,4 @@ def classify_link(
     depth: int,
 ) -> LinkVerdict:
     score = link_score(anchor, url, parent_relevance, parent_host)
-    return LinkVerdict(url=url, score=score, enqueue=should_enqueue(score, depth))
+    return LinkVerdict(url=url, score=score, depth=depth)

@@ -1,30 +1,57 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 import nltk
 from nltk.corpus import stopwords
 
-from .models import Language, PageVerdict, REL_THRESHOLD
+from .models import Language, REL_THRESHOLD
 from .semantic import topic_similarity
 from .tuebingen_terms import has_tuebingen, tuebingen_hits
 
 _STOPWORDS: tuple[set[str], set[str]] | None = None
 
-# language detection reliable if >= 30 tokens
-MIN_TOKENS_FOR_LANG = 30
-# semantic model may pull a lexically-relevant page down, strong lexical should not be dropped
-LEXICAL_FLOOR = 0.5
-# minimum semantic similarity to admit a page that has no lexical signal at all
-SEM_ADMIT = 0.7
-# relevance span granted to semantically admitted pages
-SEM_ADMIT_REL = 2.0
+@dataclass(frozen=True)
+class LanguageDetectionConfig:
+    min_tokens: int = 30
+    token_re: re.Pattern[str] = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
 
-TOKEN_RE = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
+@dataclass(frozen=True)
+class SemanticScoringConfig:
+    # Model similarity may demote lexical matches, but strong lexical pages stay visible.
+    lexical_floor: float = 0.5
+    # Admit clearly on-topic English pages even when they have no lexical signal.
+    admit_threshold: float = 0.7
+    admit_span: float = 2.0
 
-# tuebingen terms in url and title score
-_TERM_IN_URL_SCORE = 5.0
-_TERM_IN_TITLE_SCORE = 3.0
+@dataclass(frozen=True)
+class LexicalScoringConfig:
+    feature_weights: dict[str, float] = field(default_factory=lambda: {
+        "url_has_tuebingen": 5.0,
+        "title_has_tuebingen": 3.0,
+    })
+
+LANGUAGE_CONFIG = LanguageDetectionConfig()
+SEMANTIC_CONFIG = SemanticScoringConfig()
+LEXICAL_CONFIG = LexicalScoringConfig()
+
+@dataclass(frozen=True)
+class PageVerdict:
+    language: Language
+    relevance: float
+
+    @property
+    def keep(self) -> bool:
+        return self.is_english and self.is_relevant
+
+    @property
+    def is_english(self) -> bool:
+        return self.language is Language.EN
+
+    @property
+    def is_relevant(self) -> bool:
+        return self.relevance >= REL_THRESHOLD
 
 def _check_nltk_stopwords() -> None:
     try:
@@ -34,7 +61,7 @@ def _check_nltk_stopwords() -> None:
         nltk.download("stopwords")
 
 def _tokenize(text: str) -> list[str]:
-    return [t.lower() for t in TOKEN_RE.findall(text)]
+    return [t.lower() for t in LANGUAGE_CONFIG.token_re.findall(text)]
 
 def _language_from_attribute(lang_attribute: str) -> Language:
     lang = lang_attribute.lower()
@@ -64,7 +91,7 @@ def detect_language(text: str, lang_attribute: str | None = None) -> Language:
         return _language_from_attribute(lang_attribute)
 
     tokens = _tokenize(text)
-    if len(tokens) < MIN_TOKENS_FOR_LANG:
+    if len(tokens) < LANGUAGE_CONFIG.min_tokens:
         return Language.UNKNOWN
 
     german_stopwords, english_stopwords = load_stopwords()
@@ -78,19 +105,48 @@ def detect_language(text: str, lang_attribute: str | None = None) -> Language:
 
     return Language.UNKNOWN
 
-def relevance_score(url: str, title: str, text: str) -> float:
+def lexical_relevance_score(url: str, title: str, text: str) -> float:
     if not (has_tuebingen(url) or has_tuebingen(title) or has_tuebingen(text)):
         return 0.0
 
-    score = 0.0
-    if has_tuebingen(url):
-        score += _TERM_IN_URL_SCORE
-    if has_tuebingen(title):
-        score += _TERM_IN_TITLE_SCORE
-
+    features = {
+        "url_has_tuebingen": has_tuebingen(url),
+        "title_has_tuebingen": has_tuebingen(title),
+    }
+    score = sum(w for name, w in LEXICAL_CONFIG.feature_weights.items() if features[name])
     score += min(tuebingen_hits(text), 10)
 
     return score
+
+def page_score(
+    url: str,
+    title: str,
+    text: str,
+    lang_attribute: str | None = None,
+) -> tuple[Language, float]:
+    lang = detect_language(text, lang_attribute)
+    lexical = lexical_relevance_score(url, title, text)
+    rel = 0.0
+
+    if lexical > 0.0:
+        # known-relevant page: the model only refines the lexical score
+        sim = topic_similarity(title, text)
+        floor = SEMANTIC_CONFIG.lexical_floor
+        rel = lexical * (floor + (1.0 - floor) * sim)
+    elif lang is Language.EN:
+        # no lexical signal, the model admits clearly on-topic English pages
+        sim = topic_similarity(title, text)
+        threshold = SEMANTIC_CONFIG.admit_threshold
+        if sim >= threshold:
+            rel = (
+                REL_THRESHOLD
+                + SEMANTIC_CONFIG.admit_span
+                * (sim - threshold)
+                / (1.0 - threshold)
+            )
+
+    return lang, rel
+
 
 def classify_page(
     url: str,
@@ -98,21 +154,5 @@ def classify_page(
     text: str,
     lang_attribute: str | None = None,
 ) -> PageVerdict:
-    lang = detect_language(text, lang_attribute)
-    lexical = relevance_score(url, title, text)
-
-    if lexical > 0.0:
-        # known-relevant page: the model only refines the lexical score
-        sim = topic_similarity(title, text)
-        rel = lexical * (LEXICAL_FLOOR + (1.0 - LEXICAL_FLOOR) * sim)
-    elif lang is Language.EN:
-        # no lexical signal, the model admits clearly on-topic English pages
-        sim = topic_similarity(title, text)
-        if sim >= SEM_ADMIT:
-            rel = REL_THRESHOLD + SEM_ADMIT_REL * (sim - SEM_ADMIT) / (1.0 - SEM_ADMIT)
-        else:
-            rel = 0.0
-    else:
-        rel = 0.0
-
-    return PageVerdict(language=lang, relevance=rel)
+    lang, relevance = page_score(url, title, text, lang_attribute)
+    return PageVerdict(language=lang, relevance=relevance)
