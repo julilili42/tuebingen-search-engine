@@ -1,9 +1,13 @@
+import pytest
+
+import tuebingen_crawler.link_classifier as link_classifier
 from tuebingen_crawler.link_classifier import (
     FRONTIER_CONFIG,
     LINK_CONFIG,
     LinkVerdict,
     classify_link,
     link_score,
+    semantic_link_score,
 )
 from tuebingen_crawler.models import REL_THRESHOLD
 
@@ -74,6 +78,64 @@ def test_link_score_skips_resource_urls():
         parent_host="www.tuebingen.de",
     )
     assert score == 0.0
+
+
+def test_link_score_skips_web_archive_hosts():
+    for host in LINK_CONFIG.blocked_hosts:
+        score = link_score(
+            anchor="Tübingen history",
+            url=f"https://{host}/web/20240101/https://www.tuebingen.de/",
+            parent_relevance=REL_THRESHOLD,
+            parent_host=host,
+        )
+
+        assert score == 0.0
+
+
+def test_semantic_link_score_uses_anchor_and_url_path(monkeypatch):
+    def fake_similarity(title, text):
+        assert title == ""
+        assert "Old Town" in text
+        assert "old town" in text
+        return 0.85
+
+    monkeypatch.setattr(link_classifier, "topic_similarity", fake_similarity)
+
+    score = semantic_link_score("Old Town", "https://example.org/old-town")
+    threshold = LINK_CONFIG.semantic.admit_threshold
+
+    assert score == pytest.approx((0.85 - threshold) / (1.0 - threshold))
+
+
+def test_link_score_semantic_signal_lifts_link_from_strong_parent(monkeypatch):
+    monkeypatch.setattr(link_classifier, "topic_similarity", lambda title, text: 1.0)
+
+    score = link_score(
+        anchor="Old Town",
+        url="https://example.org/old-town",
+        parent_relevance=15.0,
+        parent_host="host",
+        depth=1,
+    )
+
+    assert score >= FRONTIER_CONFIG.threshold
+
+
+def test_link_score_skips_semantic_signal_for_weak_parent(monkeypatch):
+    def fail_similarity(title, text):
+        raise AssertionError("semantic scoring should require a strong parent page")
+
+    monkeypatch.setattr(link_classifier, "topic_similarity", fail_similarity)
+
+    score = link_score(
+        anchor="Old Town",
+        url="https://example.org/old-town",
+        parent_relevance=REL_THRESHOLD,
+        parent_host="host",
+        depth=1,
+    )
+
+    assert score < FRONTIER_CONFIG.threshold
 
 
 def test_link_score_strong_parent_lifts_generic_internal_link():
