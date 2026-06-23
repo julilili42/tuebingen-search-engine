@@ -18,10 +18,14 @@ def validate_start_url(url: str) -> str:
 
 # normalizes url
 def canonical_url(raw_url: str, base_url: str) -> tuple[str, bool]:
-    absolute = urljoin(base_url, raw_url)
-    parsed = urlparse(absolute)
+    try:
+        absolute = urljoin(base_url, raw_url)
+        parsed = urlparse(absolute)
+        hostname = parsed.hostname
+    except ValueError:
+        return "", False
 
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    if parsed.scheme not in {"http", "https"} or not hostname:
         return "", False
 
     path = parsed.path

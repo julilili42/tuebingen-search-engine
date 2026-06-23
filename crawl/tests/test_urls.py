@@ -65,6 +65,17 @@ def test_canonical_url_rejects_non_http_schemes(href):
     assert url == ""
 
 
+@pytest.mark.parametrize("href", [
+    "http://[::1",
+    "http://[www.example.com]/x",
+    "//[bad]/x",
+])
+def test_canonical_url_rejects_invalid_bracket_hosts(href):
+    url, ok = canonical_url(href, "https://www.tuepedia.de/")
+    assert not ok
+    assert url == ""
+
+
 def test_url_slug_basic_path():
     assert url_slug("https://www.tuepedia.de/wiki/Tübingen") == "wiki-tübingen"
 
