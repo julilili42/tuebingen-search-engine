@@ -5,14 +5,41 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+_BASE_PAGE_COLUMNS = (
+    "title",
+    "url",
+    "host",
+    "path",
+    "status_code",
+    "content_type",
+)
+_DEBUG_PAGE_COLUMNS = (
+    "crawl_depth",
+    "language",
+    "relevance",
+    "token_count",
+)
+_TIMESTAMP_PAGE_COLUMNS = (
+    "fetched_at",
+    "indexed_at",
+)
+_PAGE_COLUMNS = ", ".join(
+    (*_BASE_PAGE_COLUMNS, *_DEBUG_PAGE_COLUMNS, *_TIMESTAMP_PAGE_COLUMNS)
+)
+
 
 @dataclass(frozen=True)
 class PageRecord:
+    title: str
     url: str
     host: str
     path: Path
     status_code: int | None
     content_type: str | None
+    crawl_depth: int | None
+    language: str | None
+    relevance: float | None
+    token_count: int | None
     fetched_at: str
     indexed_at: str | None
 
@@ -26,19 +53,24 @@ class PageLoad:
     @staticmethod
     def _row_to_page(row: sqlite3.Row) -> PageRecord:
         return PageRecord(
+            title=row["title"],
             url=row["url"],
             host=row["host"],
             path=Path(row["path"]),
             status_code=row["status_code"],
             content_type=row["content_type"],
+            crawl_depth=row["crawl_depth"],
+            language=row["language"],
+            relevance=row["relevance"],
+            token_count=row["token_count"],
             fetched_at=row["fetched_at"],
             indexed_at=row["indexed_at"],
         )
     
     def get_page_by_file_path(self, path: Path) -> PageRecord | None:
         row = self.con.execute(
-            """
-            SELECT url, host, path, status_code, content_type, fetched_at, indexed_at
+            f"""
+            SELECT {_PAGE_COLUMNS}
             FROM pages
             WHERE path = ?
             """,
@@ -53,8 +85,8 @@ class PageLoad:
 
     def iter_html_pages(self) -> Iterator[PageRecord]:
         rows = self.con.execute(
-            """
-            SELECT url, host, path, status_code, content_type, fetched_at, indexed_at
+            f"""
+            SELECT {_PAGE_COLUMNS}
             FROM pages
             WHERE content_type IS NULL OR content_type LIKE 'text/html%'
             ORDER BY id

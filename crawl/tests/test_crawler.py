@@ -142,6 +142,20 @@ def test_crawl_site_uses_normalized_host_for_storage(tmp_path, page_store):
     assert all(Path(page.path).parent == tmp_path / "host" for page in pages)
 
 
+def test_crawl_site_stores_selection_debug_metadata(client, tmp_path, page_store):
+    run_crawl(client, tmp_path, page_store)
+
+    pages = {page.url: page for page in page_store.iter_html_pages()}
+    root = pages["https://host/"]
+    child = pages["https://host/a"]
+
+    assert root.crawl_depth == 0
+    assert child.crawl_depth == 1
+    assert root.language == "en"
+    assert root.relevance is not None and root.relevance > 0.0
+    assert root.token_count is not None and root.token_count >= 30
+
+
 def test_crawl_site_respects_max_pages_per_seed(client, tmp_path, page_store, requested_paths):
     run_crawl(client, tmp_path, page_store, max_pages_per_seed=2)
 

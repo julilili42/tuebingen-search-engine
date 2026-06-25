@@ -12,11 +12,16 @@ def make_page_load(db_path: Path, pages: dict[Path, str | None]) -> PageLoad:
         """
         CREATE TABLE pages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
             url TEXT NOT NULL,
             host TEXT NOT NULL,
             path TEXT NOT NULL,
             status_code INTEGER,
             content_type TEXT,
+            crawl_depth INTEGER,
+            language TEXT,
+            relevance REAL,
+            token_count INTEGER,
             fetched_at TEXT NOT NULL,
             indexed_at TEXT
         )
@@ -26,16 +31,22 @@ def make_page_load(db_path: Path, pages: dict[Path, str | None]) -> PageLoad:
         con.execute(
             """
             INSERT INTO pages (
-                url, host, path, status_code, content_type, fetched_at, indexed_at
+                title, url, host, path, status_code, content_type,
+                crawl_depth, language, relevance, token_count, fetched_at, indexed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                path.stem,
                 f"https://example.test/{path.name}",
                 "example.test",
                 str(path),
                 200,
                 content_type,
+                0,
+                "en",
+                5.0,
+                100,
                 "2026-01-01T00:00:00Z",
                 None,
             ),

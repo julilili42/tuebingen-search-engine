@@ -6,7 +6,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-_PAGE_COLUMNS = """title, url, host, path, status_code, content_type, fetched_at, indexed_at"""
+_BASE_PAGE_COLUMNS = (
+    "title",
+    "url",
+    "host",
+    "path",
+    "status_code",
+    "content_type",
+)
+_DEBUG_PAGE_COLUMNS = (
+    "crawl_depth",
+    "language",
+    "relevance",
+    "token_count",
+)
+_TIMESTAMP_PAGE_COLUMNS = (
+    "fetched_at",
+    "indexed_at",
+)
+_PAGE_COLUMNS = ", ".join(
+    (*_BASE_PAGE_COLUMNS, *_DEBUG_PAGE_COLUMNS, *_TIMESTAMP_PAGE_COLUMNS)
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +37,10 @@ class PageRecord:
     path: Path
     status_code: int | None
     content_type: str | None
+    crawl_depth: int | None
+    language: str | None
+    relevance: float | None
+    token_count: int | None
     fetched_at: str
     indexed_at: str | None
 
@@ -54,10 +78,14 @@ class PageStore:
                 path TEXT NOT NULL,
                 status_code INTEGER,
                 content_type TEXT,
-                fetched_at TEXT NOT NULL,
-                indexed_at TEXT,
+                crawl_depth INTEGER,
+                language TEXT,
+                relevance REAL,
+                token_count INTEGER,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                indexed_at TEXT
             )
             """
         )
@@ -85,13 +113,17 @@ class PageStore:
             for row in self.con.execute("PRAGMA table_info(pages)").fetchall()
         }
 
-        if "title" not in columns:
-            self.con.execute(
-                """
-                ALTER TABLE pages
-                ADD COLUMN title TEXT NOT NULL DEFAULT ''
-                """
-            )
+        migrations = {
+            "title": "TEXT NOT NULL DEFAULT ''",
+            "crawl_depth": "INTEGER",
+            "language": "TEXT",
+            "relevance": "REAL",
+            "token_count": "INTEGER",
+        }
+
+        for name, definition in migrations.items():
+            if name not in columns:
+                self.con.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
 
     def upsert_page(
         self,
@@ -103,6 +135,10 @@ class PageStore:
         status_code: int | None = None,
         content_type: str | None = None,
         fetched_at: str | None = None,
+        crawl_depth: int | None = None,
+        language: str | None = None,
+        relevance: float | None = None,
+        token_count: int | None = None,
     ) -> None:
         now = self._now()
         fetched_at = fetched_at or now
@@ -117,18 +153,26 @@ class PageStore:
                     path,
                     status_code,
                     content_type,
-                    fetched_at,
-                    indexed_at,
+                    crawl_depth,
+                    language,
+                    relevance,
+                    token_count,
                     created_at,
-                    updated_at
+                    updated_at,
+                    fetched_at,
+                    indexed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 ON CONFLICT(url) DO UPDATE SET
                     title = excluded.title,
                     host = excluded.host,
                     path = excluded.path,
                     status_code = excluded.status_code,
                     content_type = excluded.content_type,
+                    crawl_depth = excluded.crawl_depth,
+                    language = excluded.language,
+                    relevance = excluded.relevance,
+                    token_count = excluded.token_count,
                     fetched_at = excluded.fetched_at,
                     updated_at = excluded.updated_at
                 """,
@@ -139,9 +183,13 @@ class PageStore:
                     str(path),
                     status_code,
                     content_type,
+                    crawl_depth,
+                    language,
+                    relevance,
+                    token_count,
+                    now,
+                    now,
                     fetched_at,
-                    now,
-                    now,
                 ),
             )
 
@@ -172,6 +220,10 @@ class PageStore:
             path=Path(row["path"]),
             status_code=row["status_code"],
             content_type=row["content_type"],
+            crawl_depth=row["crawl_depth"],
+            language=row["language"],
+            relevance=row["relevance"],
+            token_count=row["token_count"],
             fetched_at=row["fetched_at"],
             indexed_at=row["indexed_at"],
         )

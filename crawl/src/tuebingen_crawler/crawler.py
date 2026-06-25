@@ -149,6 +149,10 @@ def crawl_site(
                 path=path,
                 status_code=fetch_result.status_code,
                 content_type=fetch_result.content_type,
+                crawl_depth=depth,
+                language=verdict.language.value,
+                relevance=verdict.relevance,
+                token_count=verdict.token_count,
             )
             state.statistics.saved += 1
             host_counts[hostname] = host_counts.get(hostname, 0) + 1
@@ -183,35 +187,9 @@ def crawl_site(
 
     return state
 
-def _log_index_exclusion(verdict: PageVerdict, status_code: int, url: str) -> None:
-    match verdict.index_exclusion:
-        case PageIndexExclusion.OFFTOPIC:
-            logger.debug(
-                "%-7s | %3d | rel=%5.1f | %s",
-                "OFFTOPIC",
-                status_code,
-                verdict.relevance,
-                url,
-            )
-        case PageIndexExclusion.TOO_SHORT:
-            logger.debug(
-                "%-7s | %3d | rel=%5.1f | tokens=%d | %s",
-                "SHORT",
-                status_code,
-                verdict.relevance,
-                verdict.token_count,
-                url,
-            )
-        case PageIndexExclusion.NON_ENGLISH:
-            logger.debug(
-                "%-7s | %3d | lang=%s | %s",
-                "NON-EN",
-                status_code,
-                verdict.language,
-                url,
-            )
-        case None:
-            return
+# caps the number of sites per hostname: goal is to increase entropy by forcing a limit on the crawler
+def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
+    return max_pages_per_host is not None and host_counts.get(host, 0) >= max_pages_per_host
 
 # add relevant urls on current_url to frontier
 def evaluate_links(
@@ -241,10 +219,6 @@ def evaluate_links(
             # host-capped link stays eligible to be reached from a stronger parent.
             state.seen_urls.add(final_url)
 
-# caps the number of sites per hostname: goal is to increase entropy by forcing a limit on the crawler
-def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
-    return max_pages_per_host is not None and host_counts.get(host, 0) >= max_pages_per_host
-
 # load intermediate state or start a new one
 def load_or_create_state(
     state_path: Path,
@@ -272,3 +246,33 @@ def load_or_create_state(
     SEED_SCORE = 1_000_000.0
     push_frontier(state, SEED_SCORE, canonical_start, depth=0)
     return state
+
+def _log_index_exclusion(verdict: PageVerdict, status_code: int, url: str) -> None:
+    match verdict.index_exclusion:
+        case PageIndexExclusion.OFFTOPIC:
+            logger.debug(
+                "%-7s | %3d | rel=%5.1f | %s",
+                "OFFTOPIC",
+                status_code,
+                verdict.relevance,
+                url,
+            )
+        case PageIndexExclusion.TOO_SHORT:
+            logger.debug(
+                "%-7s | %3d | rel=%5.1f | tokens=%d | %s",
+                "SHORT",
+                status_code,
+                verdict.relevance,
+                verdict.token_count,
+                url,
+            )
+        case PageIndexExclusion.NON_ENGLISH:
+            logger.debug(
+                "%-7s | %3d | lang=%s | %s",
+                "NON-EN",
+                status_code,
+                verdict.language,
+                url,
+            )
+        case None:
+            return
