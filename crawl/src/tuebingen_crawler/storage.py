@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from .models import CrawlState, Statistics, CrawlSite
 from .urls import normalize_host, url_slug
+from .frontier import push_frontier
 import hashlib
 import tomllib
 import httpx
@@ -143,3 +144,32 @@ def load_state(path: Path) -> tuple[CrawlState, bool]:
     except Exception as exc:
         logger.error("Failed to load intermediate state %s.", exc)
         raise
+
+
+# load intermediate state or start a new one
+def load_or_create_state(
+    state_path: Path,
+    canonical_start: str,
+    seen_urls: set[str],
+    seen_texts: set[int],
+) -> CrawlState:
+    state, loaded = load_state(state_path)
+
+    seen_urls.update(state.seen_urls)
+    seen_texts.update(state.seen_texts)
+    state.seen_urls = seen_urls
+    state.seen_texts = seen_texts
+
+    if loaded:
+        if state.frontier:
+            logger.info("Resuming crawl with %d queued links", len(state.frontier))
+        else:
+            logger.info("Crawl state is already complete")
+        return state
+
+    state.seen_urls.add(canonical_start)
+
+    # seed links have highest possible priority
+    seed_score = 1_000_000.0
+    push_frontier(state, seed_score, canonical_start, depth=0)
+    return state

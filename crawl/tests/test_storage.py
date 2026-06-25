@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 from tuebingen_crawler.models import CrawlState, Statistics
-from tuebingen_crawler.storage import generate_state_path, load_state, save_html, save_state
+from tuebingen_crawler.storage import (
+    generate_state_path,
+    load_or_create_state,
+    load_state,
+    save_html,
+    save_state,
+)
 
 
 def test_generate_state_path_is_deterministic(tmp_path):
@@ -125,3 +131,43 @@ def test_load_state_corrupt_json_raises(tmp_path):
 
     with pytest.raises(Exception):
         load_state(path)
+
+
+def test_load_or_create_state_initializes_new_state_with_seed(tmp_path):
+    seen_urls: set[str] = set()
+    seen_texts: set[int] = set()
+
+    state = load_or_create_state(
+        tmp_path / "crawl_state.json",
+        "https://host/",
+        seen_urls,
+        seen_texts,
+    )
+
+    assert state.seen_urls is seen_urls
+    assert state.seen_texts is seen_texts
+    assert state.seen_urls == {"https://host/"}
+    assert state.frontier == [[-1_000_000.0, 1, "https://host/", 0]]
+    assert state.counter == 1
+
+
+def test_load_or_create_state_uses_shared_seen_sets_for_loaded_state(tmp_path):
+    path = tmp_path / "crawl_state.json"
+    save_state(
+        path,
+        CrawlState(
+            frontier=[[-1.0, 1, "https://host/a", 1]],
+            seen_urls={"https://host/a"},
+            seen_texts={123},
+        ),
+    )
+    seen_urls = {"https://other/"}
+    seen_texts = {456}
+
+    state = load_or_create_state(path, "https://host/", seen_urls, seen_texts)
+
+    assert state.seen_urls is seen_urls
+    assert state.seen_texts is seen_texts
+    assert state.seen_urls == {"https://other/", "https://host/a"}
+    assert state.seen_texts == {123, 456}
+    assert state.frontier == [[-1.0, 1, "https://host/a", 1]]
