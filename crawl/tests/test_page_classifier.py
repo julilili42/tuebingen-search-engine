@@ -1,6 +1,7 @@
 import tuebingen_crawler.page_classifier as page_classifier
 from tuebingen_crawler.models import Language, REL_THRESHOLD
 from tuebingen_crawler.page_classifier import (
+    PageIndexExclusion,
     SEMANTIC_CONFIG,
     classify_page,
     detect_language,
@@ -16,21 +17,18 @@ def test_detect_language_uses_lang_attribute_without_loading_stopwords(monkeypat
 
     monkeypatch.setattr(page_classifier, "load_stopwords", fail_load_stopwords)
 
-    assert detect_language("short text", "en") is Language.EN
+    assert detect_language(["short", "text"], "en") is Language.EN
 
 
 def test_detect_language_uses_cached_nltk_stopwords(monkeypatch):
     monkeypatch.setattr(page_classifier, "_STOPWORDS", ({"und", "der"}, {"the", "and"}))
 
-    text = " ".join(
-        [
-            "the", "and", "the", "and", "the", "and",
-            "university", "town", "river", "city", "history",
-        ]
-        * 3
-    )
+    tokens = [
+        "the", "and", "the", "and", "the", "and",
+        "university", "town", "river", "city", "history",
+    ] * 3
 
-    assert detect_language(text) is Language.EN
+    assert detect_language(tokens) is Language.EN
 
 
 def test_detect_language_trusts_non_english_lang_attribute(monkeypatch):
@@ -39,7 +37,7 @@ def test_detect_language_trusts_non_english_lang_attribute(monkeypatch):
 
     monkeypatch.setattr(page_classifier, "load_stopwords", fail_load_stopwords)
 
-    english_looking = " ".join(["a", "i", "o", "it", "do", "as"] * 20)
+    english_looking = ["a", "i", "o", "it", "do", "as"] * 20
     assert detect_language(english_looking, "cs") is Language.UNKNOWN
 
 
@@ -149,6 +147,28 @@ def test_classify_page_model_can_demote_borderline_page_below_threshold(monkeypa
     verdict = classify_page("https://www.tuebingen.de/hotel-booking", "Booking", body, "en")
 
     assert 0.0 < verdict.relevance < REL_THRESHOLD
+
+
+def test_classify_page_does_not_keep_short_relevant_english_page(monkeypatch):
+    monkeypatch.setattr(page_classifier, "topic_similarity", lambda title, text: 1.0)
+
+    verdict = classify_page("https://example.com/short", "Tübingen", "Short note.", "en")
+
+    assert verdict.is_english
+    assert verdict.is_relevant
+    assert not verdict.has_enough_text
+    assert verdict.should_follow_links
+    assert not verdict.should_index
+    assert verdict.index_exclusion is PageIndexExclusion.TOO_SHORT
+
+
+def test_short_relevant_page_is_too_short_before_non_english(monkeypatch):
+    monkeypatch.setattr(page_classifier, "topic_similarity", lambda title, text: 1.0)
+
+    verdict = classify_page("https://example.com/short", "Tübingen", "Kurzer Text.", "de")
+
+    assert verdict.is_relevant
+    assert verdict.index_exclusion is PageIndexExclusion.TOO_SHORT
 
 
 # --- semantic admission of pages without any lexical signal ------------------

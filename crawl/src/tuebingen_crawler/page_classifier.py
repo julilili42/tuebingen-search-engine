@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import nltk
 from nltk.corpus import stopwords
@@ -13,7 +14,7 @@ from .tuebingen_terms import has_tuebingen, tuebingen_hits
 _STOPWORDS: tuple[set[str], set[str]] | None = None
 
 @dataclass(frozen=True)
-class LanguageDetectionConfig:
+class PageHeuristicsConfig:
     min_tokens: int = 30
     token_re: re.Pattern[str] = re.compile(r"[a-zäöüß]+", re.IGNORECASE)
 
@@ -32,18 +33,38 @@ class LexicalScoringConfig:
         "title_has_tuebingen": 3.0,
     })
 
-LANGUAGE_CONFIG = LanguageDetectionConfig()
+HEURISTIC_CONFIG = PageHeuristicsConfig()
 SEMANTIC_CONFIG = SemanticScoringConfig()
 LEXICAL_CONFIG = LexicalScoringConfig()
+
+class PageIndexExclusion(StrEnum):
+    OFFTOPIC = "offtopic"
+    NON_ENGLISH = "non_english"
+    TOO_SHORT = "too_short"
 
 @dataclass(frozen=True)
 class PageVerdict:
     language: Language
     relevance: float
+    token_count: int = HEURISTIC_CONFIG.min_tokens
 
     @property
-    def keep(self) -> bool:
-        return self.is_english and self.is_relevant
+    def should_index(self) -> bool:
+        return self.index_exclusion is None
+
+    @property
+    def should_follow_links(self) -> bool:
+        return self.is_relevant
+
+    @property
+    def index_exclusion(self) -> PageIndexExclusion | None:
+        if not self.is_relevant:
+            return PageIndexExclusion.OFFTOPIC
+        if not self.has_enough_text:
+            return PageIndexExclusion.TOO_SHORT
+        if not self.is_english:
+            return PageIndexExclusion.NON_ENGLISH
+        return None
 
     @property
     def is_english(self) -> bool:
@@ -53,6 +74,10 @@ class PageVerdict:
     def is_relevant(self) -> bool:
         return self.relevance >= REL_THRESHOLD
 
+    @property
+    def has_enough_text(self) -> bool:
+        return self.token_count >= HEURISTIC_CONFIG.min_tokens
+
 def _check_nltk_stopwords() -> None:
     try:
         stopwords.words("english")
@@ -61,7 +86,7 @@ def _check_nltk_stopwords() -> None:
         nltk.download("stopwords")
 
 def _tokenize(text: str) -> list[str]:
-    return [t.lower() for t in LANGUAGE_CONFIG.token_re.findall(text)]
+    return [t.lower() for t in HEURISTIC_CONFIG.token_re.findall(text)]
 
 def _language_from_attribute(lang_attribute: str) -> Language:
     lang = lang_attribute.lower()
@@ -86,12 +111,14 @@ def load_stopwords() -> tuple[set[str], set[str]]:
 
     return _STOPWORDS
 
-def detect_language(text: str, lang_attribute: str | None = None) -> Language:
+def detect_language(
+    tokens: list[str],
+    lang_attribute: str | None = None,
+) -> Language:
     if lang_attribute:
         return _language_from_attribute(lang_attribute)
 
-    tokens = _tokenize(text)
-    if len(tokens) < LANGUAGE_CONFIG.min_tokens:
+    if len(tokens) < HEURISTIC_CONFIG.min_tokens:
         return Language.UNKNOWN
 
     german_stopwords, english_stopwords = load_stopwords()
@@ -122,9 +149,10 @@ def page_score(
     url: str,
     title: str,
     text: str,
+    tokens: list[str],
     lang_attribute: str | None = None,
 ) -> tuple[Language, float]:
-    lang = detect_language(text, lang_attribute)
+    lang = detect_language(tokens, lang_attribute)
     lexical = lexical_relevance_score(url, title, text)
     rel = 0.0
 
@@ -147,12 +175,12 @@ def page_score(
 
     return lang, rel
 
-
 def classify_page(
     url: str,
     title: str,
     text: str,
     lang_attribute: str | None = None,
 ) -> PageVerdict:
-    lang, relevance = page_score(url, title, text, lang_attribute)
-    return PageVerdict(language=lang, relevance=relevance)
+    tokens = _tokenize(text)
+    lang, relevance = page_score(url, title, text, tokens, lang_attribute)
+    return PageVerdict(language=lang, relevance=relevance, token_count=len(tokens))

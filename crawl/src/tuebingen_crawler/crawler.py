@@ -10,7 +10,7 @@ from .storage import load_state, generate_state_path, load_robots, save_state, m
 from .urls import validate_start_url, canonical_url, normalize_host
 from .fetcher import fetch_page
 from .extract import parse_page
-from .page_classifier import classify_page
+from .page_classifier import PageIndexExclusion, PageVerdict, classify_page
 from .link_classifier import classify_link
 from .save_pages import PageStore
 from .frontier import push_frontier, pop_frontier
@@ -90,7 +90,7 @@ def crawl_site(
             continue
 
         if not robot_parser.can_fetch(user_agent, current_url):
-            logger.info("Skipping disallowed URL: %s", current_url)
+            logger.debug("Skipping disallowed URL: %s", current_url)
             state.statistics.failed += 1
             continue
 
@@ -104,7 +104,7 @@ def crawl_site(
             bad_status = status < 200 or status >= 300
             if bad_status:
                 state.statistics.failed += 1
-            logger.info(
+            logger.debug(
                 "%-7s | %3d | %-10s | %s",
                 "FAILED" if bad_status else "SKIPPED",
                 status,
@@ -123,20 +123,10 @@ def crawl_site(
         if not page.text.strip():
             continue
 
-        # classify the fetched page before deciding whether it belongs in the index
+        # classify before deciding whether to index the page or follow its links
         verdict = classify_page(current_url, page.title, page.text, page.lang)
 
-        if not verdict.is_relevant:
-            logger.info(
-                "%-7s | %3d | rel=%5.1f | %s",
-                "OFFTOPIC",
-                fetch_result.status_code,
-                verdict.relevance,
-                current_url,
-            )
-            continue
-
-        if verdict.keep:
+        if verdict.should_index:
             # avoids recrawling the same content
             fingerprint = simhash(page.text)
             if page.text and is_near_duplicate(fingerprint, seen_texts):
@@ -171,13 +161,9 @@ def crawl_site(
                 current_url,
             )
         else:
-            logger.info(
-                "%-7s | %3d | lang=%s | %s",
-                "NON-EN",
-                fetch_result.status_code,
-                verdict.language,
-                current_url,
-            )
+            _log_index_exclusion(verdict, fetch_result.status_code, current_url)
+            if not verdict.should_follow_links:
+                continue
 
         # discovery runs for every relevant page
         evaluate_links(
@@ -197,6 +183,35 @@ def crawl_site(
 
     return state
 
+def _log_index_exclusion(verdict: PageVerdict, status_code: int, url: str) -> None:
+    match verdict.index_exclusion:
+        case PageIndexExclusion.OFFTOPIC:
+            logger.debug(
+                "%-7s | %3d | rel=%5.1f | %s",
+                "OFFTOPIC",
+                status_code,
+                verdict.relevance,
+                url,
+            )
+        case PageIndexExclusion.TOO_SHORT:
+            logger.debug(
+                "%-7s | %3d | rel=%5.1f | tokens=%d | %s",
+                "SHORT",
+                status_code,
+                verdict.relevance,
+                verdict.token_count,
+                url,
+            )
+        case PageIndexExclusion.NON_ENGLISH:
+            logger.debug(
+                "%-7s | %3d | lang=%s | %s",
+                "NON-EN",
+                status_code,
+                verdict.language,
+                url,
+            )
+        case None:
+            return
 
 # add relevant urls on current_url to frontier
 def evaluate_links(
