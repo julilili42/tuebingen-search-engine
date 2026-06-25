@@ -5,8 +5,15 @@ import httpx
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urlparse
 from pathlib import Path
-from .models import CrawlState, Config, CrawlSite
-from .storage import load_state, generate_state_path, load_robots, save_state, maybe_save_state, save_html
+from .models import CrawlState, Config, CrawlSite, FetchResult
+from .storage import (
+    generate_state_path,
+    load_or_create_state,
+    load_robots,
+    save_state,
+    maybe_save_state,
+    save_html,
+)
 from .urls import validate_start_url, canonical_url, normalize_host
 from .fetcher import fetch_page
 from .extract import parse_page
@@ -37,73 +44,142 @@ def crawl_hostname(config: Config, page_store: PageStore) -> None:
                 logger.warning("Skipping %s because robots.txt disallows it", site.url)
                 continue
 
-            state = crawl_site(
-                client,
-                site,
-                config.save_dir,
-                config.save_state_every,
-                page_store,
-                robot_parser,
-                config.user_agent,
-                seen_urls,
-                seen_texts,
-                host_counts,
-                config.max_pages_per_host,
-            )
+            state = CrawlRun(
+                client=client,
+                site=site,
+                save_dir=config.save_dir,
+                save_state_every=config.save_state_every,
+                page_store=page_store,
+                robot_parser=robot_parser,
+                user_agent=config.user_agent,
+                seen_urls=seen_urls,
+                seen_texts=seen_texts,
+                host_counts=host_counts,
+                max_pages_per_host=config.max_pages_per_host,
+            ).run()
 
             state.statistics.print()
 
-# crawls individual side
-def crawl_site(
-    client: httpx.Client,
-    site: CrawlSite,
-    save_dir: Path,
-    save_state_every: int,
-    page_store: PageStore,
-    robot_parser: RobotFileParser,
-    user_agent: str,
-    seen_urls: set[str] | None = None,
-    seen_texts: set[int] | None = None,
-    host_counts: dict[str, int] | None = None,
-    max_pages_per_host: int | None = None,
-) -> CrawlState:
-    seen_urls = seen_urls if seen_urls is not None else set()
-    seen_texts = seen_texts if seen_texts is not None else set()
-    host_counts = host_counts if host_counts is not None else {}
+class CrawlRun:
+    def __init__(
+        self,
+        *,
+        client: httpx.Client,
+        site: CrawlSite,
+        save_dir: Path,
+        save_state_every: int,
+        page_store: PageStore,
+        robot_parser: RobotFileParser,
+        user_agent: str,
+        seen_urls: set[str] | None = None,
+        seen_texts: set[int] | None = None,
+        host_counts: dict[str, int] | None = None,
+        max_pages_per_host: int | None = None,
+    ) -> None:
+        self.client = client
+        self.site = site
+        self.save_dir = save_dir
+        self.save_state_every = save_state_every
+        self.page_store = page_store
+        self.robot_parser = robot_parser
+        self.user_agent = user_agent
+        self.seen_urls = seen_urls if seen_urls is not None else set()
+        self.seen_texts = seen_texts if seen_texts is not None else set()
+        self.host_counts = host_counts if host_counts is not None else {}
+        self.max_pages_per_host = max_pages_per_host
+        self._state: CrawlState | None = None
 
-    canonical_start = validate_start_url(site.url)
-    hostname = normalize_host(urlparse(canonical_start).hostname)
+    @property
+    def state(self) -> CrawlState:
+        if self._state is None:
+            raise RuntimeError("CrawlRun state is not initialized")
+        return self._state
 
-    state_path = generate_state_path(save_dir, hostname, canonical_start)
-    state = load_or_create_state(state_path, canonical_start, seen_urls, seen_texts)
+    # crawls individual side
+    def run(self) -> CrawlState:
+        canonical_start = validate_start_url(self.site.url)
+        hostname = normalize_host(urlparse(canonical_start).hostname)
 
-    # crawling continues until the heap is empty or (optional) max_page is reached.
-    while state.frontier:
-        if site.max_pages_per_seed is not None and site.max_pages_per_seed >= 0 and state.statistics.saved >= site.max_pages_per_seed:
-            break
+        state_path = generate_state_path(self.save_dir, hostname, canonical_start)
+        state = load_or_create_state(
+            state_path, canonical_start, self.seen_urls, self.seen_texts
+        )
+        self._state = state
 
-        current_url, depth = pop_frontier(state)
-        state.statistics.discovered += 1
+        # crawling continues until the heap is empty or (optional) max_page is reached.
+        while self.state.frontier:
+            if (
+                self.site.max_pages_per_seed is not None
+                and self.site.max_pages_per_seed >= 0
+                and self.state.statistics.saved >= self.site.max_pages_per_seed
+            ):
+                break
 
-        hostname = normalize_host(urlparse(current_url).hostname)
-        if _host_at_cap(host_counts, max_pages_per_host, hostname):
-            continue
+            current_url, depth = pop_frontier(self.state)
+            self.state.statistics.discovered += 1
 
-        if not robot_parser.can_fetch(user_agent, current_url):
-            logger.debug("Skipping disallowed URL: %s", current_url)
-            state.statistics.failed += 1
-            continue
+            hostname = normalize_host(urlparse(current_url).hostname)
+            if _host_at_cap(self.host_counts, self.max_pages_per_host, hostname):
+                continue
 
-        fetch_result = fetch_page(client, current_url, site, state)
+            if not self.robot_parser.can_fetch(self.user_agent, current_url):
+                logger.debug("Skipping disallowed URL: %s", current_url)
+                self.state.statistics.failed += 1
+                continue
 
-        if fetch_result is None:
-            continue
+            fetch_result = fetch_page(self.client, current_url, self.site, self.state)
 
+            if fetch_result is None:
+                continue
+
+            follow_links = self.process_fetched_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
+            )
+            if follow_links is None:
+                continue
+            links, relevance = follow_links
+
+            # link extraction runs for every relevant page
+            evaluate_links(
+                state=self.state,
+                links=links,
+                current_url=current_url,
+                depth=depth,
+                parent_relevance=relevance,
+                parent_host=hostname,
+                host_counts=self.host_counts,
+                max_pages_per_host=self.max_pages_per_host,
+            )
+
+            maybe_save_state(self.save_state_every, state_path, self.state)
+
+        save_state(state_path, self.state)
+
+        return self.state
+
+    def process_fetched_page(
+        self,
+        *,
+        current_url: str,
+        hostname: str,
+        depth: int,
+        fetch_result: FetchResult,
+    ) -> tuple[list[tuple[str, str]], float] | None:
         if fetch_result.body is None:
             status = fetch_result.status_code
             bad_status = status < 200 or status >= 300
+            self.reject_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
+                exclusion_reason="bad_status" if bad_status else "non_html",
+            )
             if bad_status:
-                state.statistics.failed += 1
+                self.state.statistics.failed += 1
             logger.debug(
                 "%-7s | %3d | %-10s | %s",
                 "FAILED" if bad_status else "SKIPPED",
@@ -111,17 +187,33 @@ def crawl_site(
                 fetch_result.content_type,
                 current_url,
             )
-            continue
+            return None
 
         try:
             page = parse_page(fetch_result.body)
         except Exception as exc:
             logger.error("Failed to parse %s with error %s", current_url, exc)
-            state.statistics.failed += 1
-            continue
-        
+            self.reject_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
+                exclusion_reason="parse_error",
+            )
+            self.state.statistics.failed += 1
+            return None
+
         if not page.text.strip():
-            continue
+            self.reject_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
+                exclusion_reason="empty_text",
+                title=page.title,
+                token_count=0,
+            )
+            return None
 
         # classify before deciding whether to index the page or follow its links
         verdict = classify_page(current_url, page.title, page.text, page.lang)
@@ -129,63 +221,124 @@ def crawl_site(
         if verdict.should_index:
             # avoids recrawling the same content
             fingerprint = simhash(page.text)
-            if page.text and is_near_duplicate(fingerprint, seen_texts):
+            if page.text and is_near_duplicate(fingerprint, self.seen_texts):
                 logger.info("Skipping duplicate text: %s", current_url)
-                continue
-            seen_texts.add(fingerprint)
-            
-            try:
-                path = save_html(hostname, save_dir, current_url, fetch_result.body)
-            except Exception as exc:
-                logger.error("Failed to save html %s with error %s", current_url, exc)
-                state.statistics.failed += 1
-                continue
+                self.reject_page(
+                    current_url=current_url,
+                    hostname=hostname,
+                    depth=depth,
+                    fetch_result=fetch_result,
+                    exclusion_reason="duplicate_text",
+                    title=page.title,
+                    language=verdict.language.value,
+                    relevance=verdict.relevance,
+                    token_count=verdict.token_count,
+                )
+                return None
+            self.seen_texts.add(fingerprint)
 
-            # write crawl information into sqlite db
-            page_store.upsert_page(
+            if not self.save_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
                 title=page.title,
-                url=current_url,
-                host=hostname,
-                path=path,
-                status_code=fetch_result.status_code,
-                content_type=fetch_result.content_type,
-                crawl_depth=depth,
+                verdict=verdict,
+            ):
+                return None
+
+            return page.links, verdict.relevance
+
+        index_exclusion = verdict.index_exclusion
+        if index_exclusion is not None:
+            self.reject_page(
+                current_url=current_url,
+                hostname=hostname,
+                depth=depth,
+                fetch_result=fetch_result,
+                exclusion_reason=index_exclusion.value,
+                title=page.title,
                 language=verdict.language.value,
                 relevance=verdict.relevance,
                 token_count=verdict.token_count,
             )
-            state.statistics.saved += 1
-            host_counts[hostname] = host_counts.get(hostname, 0) + 1
+        _log_index_exclusion(verdict, fetch_result.status_code, current_url)
+        if not verdict.should_follow_links:
+            return None
 
-            logger.info(
-                "%-7s | %3d | rel=%5.1f | %s",
-                "SAVED",
-                fetch_result.status_code,
-                verdict.relevance,
-                current_url,
-            )
-        else:
-            _log_index_exclusion(verdict, fetch_result.status_code, current_url)
-            if not verdict.should_follow_links:
-                continue
+        return page.links, verdict.relevance
 
-        # discovery runs for every relevant page
-        evaluate_links(
-            state=state,
-            links=page.links,
-            current_url=current_url,
-            depth=depth,
-            parent_relevance=verdict.relevance,
-            parent_host=hostname,
-            host_counts=host_counts,
-            max_pages_per_host=max_pages_per_host,
+    def reject_page(
+        self,
+        *,
+        current_url: str,
+        hostname: str,
+        depth: int,
+        fetch_result: FetchResult,
+        exclusion_reason: str,
+        title: str = "",
+        language: str | None = None,
+        relevance: float | None = None,
+        token_count: int | None = None,
+    ) -> None:
+        self.page_store.upsert_rejected_page(
+            title=title,
+            url=current_url,
+            host=hostname,
+            exclusion_reason=exclusion_reason,
+            status_code=fetch_result.status_code,
+            content_type=fetch_result.content_type,
+            crawl_depth=depth,
+            language=language,
+            relevance=relevance,
+            token_count=token_count,
         )
 
-        maybe_save_state(save_state_every, state_path, state)
+    def save_page(
+        self,
+        *,
+        current_url: str,
+        hostname: str,
+        depth: int,
+        fetch_result: FetchResult,
+        title: str,
+        verdict: PageVerdict,
+    ) -> bool:
+        body = fetch_result.body
+        if body is None:
+            return False
 
-    save_state(state_path, state)
+        try:
+            path = save_html(hostname, self.save_dir, current_url, body)
+        except Exception as exc:
+            logger.error("Failed to save html %s with error %s", current_url, exc)
+            self.state.statistics.failed += 1
+            return False
 
-    return state
+        # write crawl information into sqlite db
+        self.page_store.upsert_page(
+            title=title,
+            url=current_url,
+            host=hostname,
+            path=path,
+            status_code=fetch_result.status_code,
+            content_type=fetch_result.content_type,
+            crawl_depth=depth,
+            language=verdict.language.value,
+            relevance=verdict.relevance,
+            token_count=verdict.token_count,
+        )
+        self.state.statistics.saved += 1
+        self.host_counts[hostname] = self.host_counts.get(hostname, 0) + 1
+
+        logger.info(
+            "%-7s | %3d | rel=%5.1f | %s",
+            "SAVED",
+            fetch_result.status_code,
+            verdict.relevance,
+            current_url,
+        )
+        return True
 
 # caps the number of sites per hostname: goal is to increase entropy by forcing a limit on the crawler
 def _host_at_cap(host_counts: dict[str, int], max_pages_per_host: int | None, host: str) -> bool:
@@ -215,37 +368,8 @@ def evaluate_links(
             host_counts, max_pages_per_host, host
         ):
             push_frontier(state, verdict.score, final_url, child_depth)
-            # only mark URLs we actually enqueued as seen; a sub-threshold or
-            # host-capped link stays eligible to be reached from a stronger parent.
+            # only mark URLs we actually enqueued as seen
             state.seen_urls.add(final_url)
-
-# load intermediate state or start a new one
-def load_or_create_state(
-    state_path: Path,
-    canonical_start: str,
-    seen_urls: set[str],
-    seen_texts: set[int],
-) -> CrawlState:
-    state, loaded = load_state(state_path)
-
-    seen_urls.update(state.seen_urls)
-    seen_texts.update(state.seen_texts)
-    state.seen_urls = seen_urls
-    state.seen_texts = seen_texts
-
-    if loaded:
-        if state.frontier:
-            logger.info("Resuming crawl with %d queued links", len(state.frontier))
-        else:
-            logger.info("Crawl state is already complete")
-        return state
-
-    state.seen_urls.add(canonical_start)
-
-    # seed links have highest possible priority
-    SEED_SCORE = 1_000_000.0
-    push_frontier(state, SEED_SCORE, canonical_start, depth=0)
-    return state
 
 def _log_index_exclusion(verdict: PageVerdict, status_code: int, url: str) -> None:
     match verdict.index_exclusion:

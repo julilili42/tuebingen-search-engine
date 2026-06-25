@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 import tuebingen_crawler.page_classifier as page_classifier
-from tuebingen_crawler.crawler import crawl_site, evaluate_links
+from tuebingen_crawler.crawler import CrawlRun, evaluate_links
 from tuebingen_crawler.models import CrawlSite, CrawlState
 from tuebingen_crawler.save_pages import PageStore
 
@@ -92,7 +92,7 @@ def run_crawl(
     max_pages_per_host=None,
     **site_overrides,
 ):
-    return crawl_site(
+    return CrawlRun(
         client=client,
         site=make_site(**site_overrides),
         save_dir=tmp_path,
@@ -103,14 +103,18 @@ def run_crawl(
         seen_urls=seen_urls,
         host_counts=host_counts,
         max_pages_per_host=max_pages_per_host,
-    )
+    ).run()
 
 
 def stored_urls(page_store) -> list[str]:
     return sorted(page.url for page in page_store.iter_html_pages())
 
 
-def test_crawl_site_visits_all_reachable_pages(client, tmp_path, page_store, requested_paths):
+def rejected_records(page_store):
+    return {page.url: page for page in page_store.iter_rejected_pages()}
+
+
+def test_crawl_run_visits_all_reachable_pages(client, tmp_path, page_store, requested_paths):
     run_crawl(client, tmp_path, page_store)
 
     assert stored_urls(page_store) == [
@@ -123,7 +127,7 @@ def test_crawl_site_visits_all_reachable_pages(client, tmp_path, page_store, req
     assert sorted(requested_paths) == ["/", "/a", "/b", "/c"]
 
 
-def test_crawl_site_saves_html_files(client, tmp_path, page_store):
+def test_crawl_run_saves_html_files(client, tmp_path, page_store):
     run_crawl(client, tmp_path, page_store)
 
     for page in page_store.iter_html_pages():
@@ -132,7 +136,7 @@ def test_crawl_site_saves_html_files(client, tmp_path, page_store):
         assert saved.read_bytes() == PAGES[httpx.URL(page.url).path]
 
 
-def test_crawl_site_uses_normalized_host_for_storage(tmp_path, page_store):
+def test_crawl_run_uses_normalized_host_for_storage(tmp_path, page_store):
     with make_client(PAGES, []) as client:
         run_crawl(client, tmp_path, page_store, url="https://www.host/")
 
@@ -142,7 +146,7 @@ def test_crawl_site_uses_normalized_host_for_storage(tmp_path, page_store):
     assert all(Path(page.path).parent == tmp_path / "host" for page in pages)
 
 
-def test_crawl_site_stores_selection_debug_metadata(client, tmp_path, page_store):
+def test_crawl_run_stores_selection_debug_metadata(client, tmp_path, page_store):
     run_crawl(client, tmp_path, page_store)
 
     pages = {page.url: page for page in page_store.iter_html_pages()}
@@ -156,14 +160,14 @@ def test_crawl_site_stores_selection_debug_metadata(client, tmp_path, page_store
     assert root.token_count is not None and root.token_count >= 30
 
 
-def test_crawl_site_respects_max_pages_per_seed(client, tmp_path, page_store, requested_paths):
+def test_crawl_run_respects_max_pages_per_seed(client, tmp_path, page_store, requested_paths):
     run_crawl(client, tmp_path, page_store, max_pages_per_seed=2)
 
     assert len(stored_urls(page_store)) == 2
     assert len(requested_paths) == 2
 
 
-def test_crawl_site_skips_fetching_when_host_capped(client, tmp_path, page_store, requested_paths):
+def test_crawl_run_skips_fetching_when_host_capped(client, tmp_path, page_store, requested_paths):
     host_counts = {"host": 1}
     state = run_crawl(
         client, tmp_path, page_store, host_counts=host_counts, max_pages_per_host=1
@@ -175,7 +179,7 @@ def test_crawl_site_skips_fetching_when_host_capped(client, tmp_path, page_store
     assert requested_paths == []
 
 
-def test_crawl_site_cap_counts_saved_pages_per_host(client, tmp_path, page_store):
+def test_crawl_run_cap_counts_saved_pages_per_host(client, tmp_path, page_store):
     host_counts: dict[str, int] = {}
     run_crawl(
         client, tmp_path, page_store, host_counts=host_counts, max_pages_per_host=2
@@ -223,7 +227,7 @@ def test_evaluate_links_enqueues_below_cap():
     assert "https://host/a" in state.seen_urls
 
 
-def test_crawl_site_updates_statistics(client, tmp_path, page_store):
+def test_crawl_run_updates_statistics(client, tmp_path, page_store):
     state = run_crawl(client, tmp_path, page_store)
 
     assert state.statistics.fetched == 4
@@ -232,7 +236,7 @@ def test_crawl_site_updates_statistics(client, tmp_path, page_store):
     assert state.statistics.failed == 0
 
 
-def test_crawl_site_counts_failed_fetches(tmp_path, page_store, requested_paths):
+def test_crawl_run_counts_failed_fetches(tmp_path, page_store, requested_paths):
     # /missing returns 404 and exhausts its single retry
     pages = {
         "/": page('<a href="/a">Tübingen A</a>', '<a href="/missing">Tübingen dead</a>'),
@@ -247,8 +251,77 @@ def test_crawl_site_counts_failed_fetches(tmp_path, page_store, requested_paths)
     assert state.statistics.failed == 1
     assert state.statistics.saved == 2
 
+    missing = rejected_records(page_store)["https://host/missing"]
+    assert missing.exclusion_reason == "bad_status"
+    assert missing.status_code == 404
+    assert missing.content_type == "text/html"
+    assert missing.crawl_depth == 1
 
-def test_crawl_site_skips_request_errors(tmp_path, page_store):
+
+def test_crawl_run_records_non_html_fetch_as_rejected(tmp_path, page_store):
+    def handler(request):
+        return httpx.Response(
+            200, headers={"Content-Type": "application/pdf"}, content=b"%PDF"
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        state = run_crawl(client, tmp_path, page_store)
+
+    assert stored_urls(page_store) == []
+    assert state.statistics.failed == 0
+    assert state.statistics.saved == 0
+
+    [rejected] = rejected_records(page_store).values()
+    assert rejected.url == "https://host/"
+    assert rejected.exclusion_reason == "non_html"
+    assert rejected.status_code == 200
+    assert rejected.content_type == "application/pdf"
+    assert rejected.crawl_depth == 0
+
+
+def test_crawl_run_records_empty_text_as_rejected(tmp_path, page_store):
+    pages = {
+        "/": b'<html lang="en"><title>T\xc3\xbcbingen</title><body> </body></html>'
+    }
+
+    with make_client(pages, []) as client:
+        state = run_crawl(client, tmp_path, page_store)
+
+    assert stored_urls(page_store) == []
+    assert state.statistics.saved == 0
+
+    [rejected] = rejected_records(page_store).values()
+    assert rejected.url == "https://host/"
+    assert rejected.title == "Tübingen"
+    assert rejected.exclusion_reason == "empty_text"
+    assert rejected.status_code == 200
+    assert rejected.content_type == "text/html"
+    assert rejected.crawl_depth == 0
+    assert rejected.token_count == 0
+
+
+def test_crawl_run_records_duplicate_text_as_rejected(tmp_path, page_store):
+    duplicate_body = page('<a href="/copy">Tübingen Copy</a>')
+    pages = {
+        "/": duplicate_body,
+        "/copy": duplicate_body,
+    }
+
+    with make_client(pages, []) as client:
+        run_crawl(client, tmp_path, page_store)
+
+    assert stored_urls(page_store) == ["https://host/"]
+
+    duplicate = rejected_records(page_store)["https://host/copy"]
+    assert duplicate.exclusion_reason == "duplicate_text"
+    assert duplicate.status_code == 200
+    assert duplicate.content_type == "text/html"
+    assert duplicate.language == "en"
+    assert duplicate.relevance is not None and duplicate.relevance > 0.0
+    assert duplicate.token_count is not None and duplicate.token_count >= 30
+
+
+def test_crawl_run_skips_request_errors(tmp_path, page_store):
     def handler(request):
         raise httpx.ConnectError("certificate verify failed", request=request)
 
@@ -260,7 +333,7 @@ def test_crawl_site_skips_request_errors(tmp_path, page_store):
     assert state.statistics.saved == 0
 
 
-def test_crawl_site_resumes_completed_state_without_fetching(client, tmp_path, page_store, requested_paths):
+def test_crawl_run_resumes_completed_state_without_fetching(client, tmp_path, page_store, requested_paths):
     first = run_crawl(client, tmp_path, page_store)
     fetches_first_run = len(requested_paths)
 
@@ -271,7 +344,7 @@ def test_crawl_site_resumes_completed_state_without_fetching(client, tmp_path, p
     assert len(requested_paths) == fetches_first_run
 
 
-def test_crawl_site_rejects_invalid_starting_url(client, tmp_path, page_store):
+def test_crawl_run_rejects_invalid_starting_url(client, tmp_path, page_store):
     with pytest.raises(ValueError):
         run_crawl(client, tmp_path, page_store, url="ftp://host/")
 
@@ -295,7 +368,7 @@ def test_shared_seen_prevents_refetch_across_seeds(client, tmp_path, page_store,
     assert requested_paths == ["/"]  # nur der Root, keine Kinder-Refetches
 
 
-def test_crawl_site_follows_links_from_relevant_non_english_page(
+def test_crawl_run_follows_links_from_relevant_non_english_page(
     tmp_path, page_store, requested_paths, monkeypatch
 ):
     # relevante, aber deutsche Hub-Seite: NICHT indexiert (EN-only), ihre Links
@@ -305,6 +378,9 @@ def test_crawl_site_follows_links_from_relevant_non_english_page(
     de_root = (
         '<html lang="de"><title>Tübingen</title>'
         "Die Universitätsstadt Tübingen liegt am Neckar. Tübingen ist alt. "
+        "Die Stadt hat eine alte Universität, eine historische Altstadt, "
+        "viele Studierende, den Neckar, Museen, Kultur, Forschung und "
+        "wichtige Orte für Besucherinnen und Besucher in Baden Württemberg. "
         '<a href="/en">Tübingen in English</a>'
     ).encode("utf-8")
     pages = {"/": de_root, "/en": page("leaf en")}
@@ -317,3 +393,11 @@ def test_crawl_site_follows_links_from_relevant_non_english_page(
     # ... ihr Link wurde dennoch verfolgt und die englische Kindseite indexiert
     assert "https://host/en" in stored_urls(page_store)
     assert "/en" in requested_paths
+
+    rejected_root = rejected_records(page_store)["https://host/"]
+    assert rejected_root.exclusion_reason == "non_english"
+    assert rejected_root.language == "de"
+    assert rejected_root.status_code == 200
+    assert rejected_root.content_type == "text/html"
+    assert rejected_root.relevance is not None and rejected_root.relevance >= 3.0
+    assert rejected_root.token_count is not None and rejected_root.token_count >= 30
