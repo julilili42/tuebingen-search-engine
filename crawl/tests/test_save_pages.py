@@ -1,6 +1,15 @@
+import csv
 import sqlite3
 
-from tuebingen_crawler.save_pages import PageStore
+import pytest
+
+from tuebingen_crawler.save_pages import (
+    CrawlExportDB,
+    LinkCandidateRecord,
+    LinkStore,
+    PageStore,
+    PageVerdictMetadata,
+)
 
 
 def test_page_store_creates_fetched_and_indexed_at_as_last_columns(tmp_path):
@@ -33,6 +42,11 @@ def test_page_store_creates_rejected_pages_table(tmp_path):
         "language",
         "relevance",
         "token_count",
+        "pageverdict_score",
+        "pageverdict_label",
+        "pageverdict_decision",
+        "pageverdict_model",
+        "pageverdict_snippet",
         "exclusion_reason",
         "created_at",
         "updated_at",
@@ -40,7 +54,7 @@ def test_page_store_creates_rejected_pages_table(tmp_path):
     ]
 
 
-def test_page_store_migrates_existing_db_without_title(tmp_path):
+def test_page_store_rejects_existing_db_with_incompatible_schema(tmp_path):
     db_path = tmp_path / "pages.sqlite"
     con = sqlite3.connect(db_path)
     con.execute(
@@ -81,15 +95,8 @@ def test_page_store_migrates_existing_db_without_title(tmp_path):
     con.commit()
     con.close()
 
-    with PageStore(db_path) as store:
-        [page] = list(store.iter_html_pages())
-
-    assert page.title == ""
-    assert page.url == "https://host/"
-    assert page.crawl_depth is None
-    assert page.language is None
-    assert page.relevance is None
-    assert page.token_count is None
+    with pytest.raises(RuntimeError, match="incompatible pages schema"):
+        PageStore(db_path)
 
 
 def test_page_store_upsert_persists_page_metadata(tmp_path):
@@ -105,6 +112,11 @@ def test_page_store_upsert_persists_page_metadata(tmp_path):
             language="en",
             relevance=7.5,
             token_count=123,
+            pageverdict_score=0.91,
+            pageverdict_label="positive",
+            pageverdict_decision="index_strong",
+            pageverdict_model="ml/artifacts/page_verdict.joblib",
+            pageverdict_snippet="A useful English Tübingen page.",
         )
 
         [page] = list(store.iter_html_pages())
@@ -114,6 +126,11 @@ def test_page_store_upsert_persists_page_metadata(tmp_path):
     assert page.language == "en"
     assert page.relevance == 7.5
     assert page.token_count == 123
+    assert page.pageverdict.score == 0.91
+    assert page.pageverdict.label == "positive"
+    assert page.pageverdict.decision == "index_strong"
+    assert page.pageverdict.model == "ml/artifacts/page_verdict.joblib"
+    assert page.pageverdict.snippet == "A useful English Tübingen page."
 
 
 def test_page_store_upsert_persists_rejected_page_metadata(tmp_path):
@@ -130,6 +147,11 @@ def test_page_store_upsert_persists_rejected_page_metadata(tmp_path):
             language="en",
             relevance=1.25,
             token_count=80,
+            pageverdict_score=0.21,
+            pageverdict_label="negative",
+            pageverdict_decision="reject_follow",
+            pageverdict_model="ml/artifacts/page_verdict.joblib",
+            pageverdict_snippet="A weak regional page.",
         )
 
         [page] = list(store.iter_rejected_pages())
@@ -146,6 +168,11 @@ def test_page_store_upsert_persists_rejected_page_metadata(tmp_path):
     assert page.language == "en"
     assert page.relevance == 1.25
     assert page.token_count == 80
+    assert page.pageverdict.score == 0.21
+    assert page.pageverdict.label == "negative"
+    assert page.pageverdict.decision == "reject_follow"
+    assert page.pageverdict.model == "ml/artifacts/page_verdict.joblib"
+    assert page.pageverdict.snippet == "A weak regional page."
     assert page.exclusion_reason == "path_trap"
 
 
@@ -200,3 +227,172 @@ def test_rejected_pages_do_not_count_as_saved_pages(tmp_path):
     assert [page.url for page in saved_pages] == ["https://host/"]
     assert [page.url for page in rejected_pages] == ["https://host/newsletter"]
     assert host_counts == {"host": 1}
+
+
+def test_link_store_creates_link_candidates_table(tmp_path):
+    with LinkStore(tmp_path / "pages.sqlite") as store:
+        columns = {
+            row["name"]
+            for row in store.con.execute(
+                "PRAGMA table_info(link_candidates)"
+            ).fetchall()
+        }
+
+    assert {
+        "parent_url",
+        "parent_pageverdict_score",
+        "target_url",
+        "anchor",
+        "raw_score",
+        "linkverdict_score",
+        "should_enqueue",
+        "selected",
+        "rejection_reason",
+    } <= columns
+
+
+def test_link_store_upserts_link_candidate(tmp_path):
+    with LinkStore(tmp_path / "pages.sqlite") as store:
+        store.upsert_link_candidates(
+            [
+                LinkCandidateRecord(
+                    parent_url="https://host/",
+                    parent_host="host",
+                    parent_depth=0,
+                    parent_pageverdict=PageVerdictMetadata(
+                        score=0.8,
+                        label="positive",
+                        decision="index_strong",
+                        model=None,
+                        snippet=None,
+                    ),
+                    parent_relevance=8.0,
+                    target_url="https://host/a",
+                    target_host="host",
+                    target_depth=1,
+                    anchor="Tübingen A",
+                    raw_score=6.5,
+                    should_enqueue=True,
+                    selected=True,
+                    linkverdict_score=0.77,
+                    linkverdict_label="positive",
+                    linkverdict_model="ml/artifacts/link_verdict.joblib",
+                )
+            ]
+        )
+
+        [row] = store.con.execute("SELECT * FROM link_candidates").fetchall()
+
+    assert row["parent_url"] == "https://host/"
+    assert row["parent_pageverdict_score"] == 0.8
+    assert row["target_url"] == "https://host/a"
+    assert row["anchor"] == "Tübingen A"
+    assert row["raw_score"] == 6.5
+    assert row["linkverdict_score"] == 0.77
+    assert row["linkverdict_label"] == "positive"
+    assert row["linkverdict_model"] == "ml/artifacts/link_verdict.joblib"
+    assert row["should_enqueue"] == 1
+    assert row["selected"] == 1
+
+
+def test_link_store_rejects_existing_db_with_incompatible_schema(tmp_path):
+    db_path = tmp_path / "pages.sqlite"
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        CREATE TABLE link_candidates (
+            id INTEGER PRIMARY KEY,
+            parent_url TEXT NOT NULL
+        )
+        """
+    )
+    con.commit()
+    con.close()
+
+    with pytest.raises(RuntimeError, match="incompatible link_candidates schema"):
+        LinkStore(db_path)
+
+
+def test_crawl_export_db_exports_pageverdict_csv(tmp_path):
+    db_path = tmp_path / "pages.sqlite"
+    out = tmp_path / "pageverdict.csv"
+    with PageStore(db_path) as store:
+        store.upsert_page(
+            title="Kept",
+            url="https://host/",
+            host="host",
+            path=tmp_path / "host" / "index.html",
+            content_type="text/html",
+            pageverdict_score=0.9,
+            pageverdict_label="positive",
+            pageverdict_decision="index_strong",
+            pageverdict_model="fake.joblib",
+            pageverdict_snippet="Strong page.",
+        )
+        store.upsert_rejected_page(
+            title="Rejected",
+            url="https://host/weak",
+            host="host",
+            exclusion_reason="low_pageverdict_score",
+            pageverdict_score=0.2,
+            pageverdict_label="negative",
+            pageverdict_decision="reject_follow",
+            pageverdict_model="fake.joblib",
+            pageverdict_snippet="Weak page.",
+        )
+
+    with CrawlExportDB(db_path) as export_db:
+        export_db.export_pageverdict_csv(out)
+
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert len(rows) == 2
+    assert rows[0]["source"] == "crawler_pageverdict"
+    assert rows[0]["title"] == "Kept"
+    assert rows[0]["pageverdict_score"] == "0.9"
+    assert rows[1]["source_table"] == "rejected_pages"
+    assert rows[1]["exclusion_reason"] == "low_pageverdict_score"
+
+
+def test_crawl_export_db_exports_linkverdict_csv(tmp_path):
+    db_path = tmp_path / "pages.sqlite"
+    out = tmp_path / "linkverdict.csv"
+    with LinkStore(db_path) as store:
+        store.upsert_link_candidates(
+            [
+                LinkCandidateRecord(
+                    parent_url="https://host/",
+                    parent_host="host",
+                    parent_depth=0,
+                    parent_pageverdict=PageVerdictMetadata(
+                        score=0.8,
+                        label="positive",
+                        decision="index_strong",
+                        model=None,
+                        snippet=None,
+                    ),
+                    parent_relevance=8.0,
+                    target_url="https://host/a",
+                    target_host="host",
+                    target_depth=1,
+                    anchor="Tübingen A",
+                    raw_score=6.5,
+                    should_enqueue=True,
+                    selected=True,
+                    linkverdict_score=0.77,
+                    linkverdict_label="positive",
+                    linkverdict_model="ml/artifacts/link_verdict.joblib",
+                )
+            ]
+        )
+
+    with CrawlExportDB(db_path) as export_db:
+        export_db.export_linkverdict_csv(out)
+
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert len(rows) == 1
+    assert rows[0]["query"] == "crawler:linkverdict"
+    assert rows[0]["source"] == "crawler_linkverdict"
+    assert rows[0]["anchor"] == "Tübingen A"
+    assert rows[0]["target_url"] == "https://host/a"
+    assert rows[0]["linkverdict_score"] == "0.77"
+    assert rows[0]["selected"] == "1"

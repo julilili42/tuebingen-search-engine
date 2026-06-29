@@ -19,14 +19,18 @@ from .fetcher import fetch_page
 from .extract import parse_page
 from .page_classifier import PageIndexExclusion, PageVerdict, classify_page
 from .link_classifier import classify_link
-from .save_pages import PageStore
+from .save_pages import LinkCandidateRecord, LinkStore, PageStore, PageVerdictMetadata
 from .frontier import push_frontier, pop_frontier
 from .dedup import simhash, is_near_duplicate
 
 logger = logging.getLogger(__name__)
 
 # crawls hostnames defined in seed.toml
-def crawl_hostname(config: Config, page_store: PageStore) -> None:
+def crawl_hostname(
+    config: Config,
+    page_store: PageStore,
+    link_store: LinkStore | None = None,
+) -> None:
     headers = {"Accept": config.accept, "User-Agent": config.user_agent}
     # avoids crawling duplicate pages
     # page might have different urls but same content
@@ -50,6 +54,7 @@ def crawl_hostname(config: Config, page_store: PageStore) -> None:
                 save_dir=config.save_dir,
                 save_state_every=config.save_state_every,
                 page_store=page_store,
+                link_store=link_store,
                 robot_parser=robot_parser,
                 user_agent=config.user_agent,
                 seen_urls=seen_urls,
@@ -71,6 +76,7 @@ class CrawlRun:
         page_store: PageStore,
         robot_parser: RobotFileParser,
         user_agent: str,
+        link_store: LinkStore | None = None,
         seen_urls: set[str] | None = None,
         seen_texts: set[int] | None = None,
         host_counts: dict[str, int] | None = None,
@@ -81,6 +87,7 @@ class CrawlRun:
         self.save_dir = save_dir
         self.save_state_every = save_state_every
         self.page_store = page_store
+        self.link_store = link_store
         self.robot_parser = robot_parser
         self.user_agent = user_agent
         self.seen_urls = seen_urls if seen_urls is not None else set()
@@ -152,6 +159,7 @@ class CrawlRun:
                 parent_host=hostname,
                 host_counts=self.host_counts,
                 max_pages_per_host=self.max_pages_per_host,
+                link_store=self.link_store,
             )
 
             maybe_save_state(self.save_state_every, state_path, self.state)
@@ -361,8 +369,10 @@ def evaluate_links(
     parent_host: str,
     host_counts: dict[str, int],
     max_pages_per_host: int | None,
+    link_store: LinkStore | None = None,
 ) -> None:
     child_depth = depth + 1
+    records: list[LinkCandidateRecord] = []
 
     for href, anchor in links:
         final_url, is_canonical = canonical_url(href, current_url)
@@ -371,9 +381,33 @@ def evaluate_links(
 
         verdict = classify_link(anchor, final_url, parent_relevance, parent_host, child_depth)
         host = normalize_host(urlparse(final_url).hostname)
-        if verdict.enqueue and not _host_at_cap(
+        should_enqueue = verdict.enqueue and not _host_at_cap(
             host_counts, max_pages_per_host, host
-        ):
+        )
+        records.append(
+            LinkCandidateRecord(
+                parent_url=current_url,
+                parent_host=parent_host,
+                parent_depth=depth,
+                parent_pageverdict=PageVerdictMetadata(
+                    score=None,
+                    label=None,
+                    decision=None,
+                    model=None,
+                    snippet=None,
+                ),
+                parent_relevance=parent_relevance,
+                target_url=final_url,
+                target_host=host,
+                target_depth=child_depth,
+                anchor=anchor,
+                raw_score=verdict.score,
+                should_enqueue=should_enqueue,
+                selected=should_enqueue,
+                rejection_reason=None if should_enqueue else "not_enqueued",
+            )
+        )
+        if should_enqueue:
             push_frontier(
                 state,
                 verdict.score,
@@ -383,6 +417,9 @@ def evaluate_links(
             )
             # only mark URLs we actually enqueued as seen
             state.seen_urls.add(final_url)
+
+    if link_store is not None:
+        link_store.upsert_link_candidates(records)
 
 def _log_index_exclusion(verdict: PageVerdict, status_code: int, url: str) -> None:
     match verdict.index_exclusion:

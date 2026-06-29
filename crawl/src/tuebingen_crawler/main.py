@@ -5,7 +5,7 @@ from pathlib import Path
 from .crawler import crawl_hostname
 from .storage import load_seed_toml
 from .models import Config
-from .save_pages import PageStore
+from .save_pages import LinkStore, PageStore
 from .paths import DEFAULT_DATA_DIR, DEFAULT_DB_PATH, DEFAULT_SEED_PATH
 
 logger = logging.getLogger(__name__)
@@ -31,9 +31,9 @@ def main() -> None:
         max_pages_per_host=MAX_PAGES_PER_HOST,
     )
     
-    with PageStore(DEFAULT_DB_PATH) as page_store:
+    with PageStore(DEFAULT_DB_PATH) as page_store, LinkStore(DEFAULT_DB_PATH) as link_store:
         try:
-            crawl_hostname(config, page_store)
+            crawl_hostname(config, page_store, link_store)
         except Exception as exc:
             logger.error("Failed to crawl with error %s", exc)
             return

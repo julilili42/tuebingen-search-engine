@@ -9,7 +9,7 @@ import tuebingen_crawler.page_classifier as page_classifier
 from tuebingen_crawler.crawler import CrawlRun, evaluate_links
 from tuebingen_crawler.link_classifier import classify_link
 from tuebingen_crawler.models import CrawlSite, CrawlState
-from tuebingen_crawler.save_pages import PageStore
+from tuebingen_crawler.save_pages import LinkStore, PageStore
 
 HTML_HEADERS = {"Content-Type": "text/html; charset=utf-8"}
 
@@ -89,6 +89,7 @@ def run_crawl(
     client,
     tmp_path,
     page_store,
+    link_store=None,
     seen_urls=None,
     host_counts=None,
     max_pages_per_host=None,
@@ -100,6 +101,7 @@ def run_crawl(
         save_dir=tmp_path,
         save_state_every=10,
         page_store=page_store,
+        link_store=link_store,
         robot_parser=allow_all_robots(),
         user_agent="TestCrawler/1.0",
         seen_urls=seen_urls,
@@ -227,6 +229,31 @@ def test_evaluate_links_enqueues_below_cap():
 
     assert len(state.frontier) == 1
     assert "https://host/a" in state.seen_urls
+
+
+def test_evaluate_links_records_link_candidates(tmp_path):
+    state = CrawlState()
+    with LinkStore(tmp_path / "pages.sqlite") as link_store:
+        evaluate_links(
+            state=state,
+            links=[("/a", "Tübingen")],
+            current_url="https://host/",
+            depth=0,
+            parent_relevance=5.0,
+            parent_host="host",
+            host_counts={},
+            max_pages_per_host=None,
+            link_store=link_store,
+        )
+
+        [row] = link_store.con.execute("SELECT * FROM link_candidates").fetchall()
+
+    assert row["parent_url"] == "https://host/"
+    assert row["target_url"] == "https://host/a"
+    assert row["anchor"] == "Tübingen"
+    assert row["should_enqueue"] == 1
+    assert row["selected"] == 1
+    assert row["parent_relevance"] == 5.0
 
 
 def test_evaluate_links_passes_saved_host_counts_to_frontier():
