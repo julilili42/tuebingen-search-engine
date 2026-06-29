@@ -216,7 +216,14 @@ class CrawlRun:
             return None
 
         # classify before deciding whether to index the page or follow its links
-        verdict = classify_page(current_url, page.title, page.text, page.lang)
+        verdict = classify_page(
+            current_url,
+            page.title,
+            page.text,
+            page.lang,
+            description=page.description,
+            h1=page.h1,
+        )
 
         if verdict.should_index:
             # avoids recrawling the same content

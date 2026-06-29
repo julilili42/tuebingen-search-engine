@@ -89,6 +89,28 @@ def test_lexical_relevance_title_only_match_qualifies():
     assert score >= REL_THRESHOLD
 
 
+def test_lexical_relevance_description_match_counts():
+    body = "A museum showing art, coins and prehistoric artefacts to its visitors. " * 5
+    score = lexical_relevance_score(
+        "https://example.com/museum",
+        "City Museum",
+        body,
+        description="Museum in Tübingen",
+    )
+    assert score > 0.0
+
+
+def test_lexical_relevance_h1_match_qualifies():
+    body = "A museum showing art, coins and prehistoric artefacts to its visitors. " * 5
+    score = lexical_relevance_score(
+        "https://example.com/museum",
+        "City Museum",
+        body,
+        h1="Tübingen City Museum",
+    )
+    assert score >= REL_THRESHOLD
+
+
 def test_lexical_relevance_single_incidental_mention_is_filtered():
     # one passing mention of Tübingen in an otherwise off-topic page is too weak
     body = ("This article is about German universities in general. "
@@ -127,6 +149,29 @@ def test_classify_page_high_similarity_keeps_lexical_score(monkeypatch):
     verdict = classify_page(_TUEBINGEN_URL, "Tübingen", _TUEBINGEN_BODY, "en")
 
     assert verdict.relevance == lexical
+
+
+def test_classify_page_includes_description_and_h1_in_semantic_text(monkeypatch):
+    seen: dict[str, str] = {}
+
+    def capture_similarity(title, text):
+        seen["text"] = text
+        return 1.0
+
+    monkeypatch.setattr(page_classifier, "topic_similarity", capture_similarity)
+
+    classify_page(
+        "https://example.com/museum",
+        "City Museum",
+        "Visible body text. " * 30,
+        "en",
+        description="Museum in Tübingen",
+        h1="Permanent exhibition",
+    )
+
+    assert "Museum in Tübingen" in seen["text"]
+    assert "Permanent exhibition" in seen["text"]
+    assert "Visible body text" in seen["text"]
 
 
 def test_classify_page_low_similarity_demotes_to_floor(monkeypatch):

@@ -31,6 +31,8 @@ class LexicalScoringConfig:
     feature_weights: dict[str, float] = field(default_factory=lambda: {
         "url_has_tuebingen": 5.0,
         "title_has_tuebingen": 3.0,
+        "description_has_tuebingen": 2.0,
+        "h1_has_tuebingen": 3.0,
     })
 
 HEURISTIC_CONFIG = PageHeuristicsConfig()
@@ -132,13 +134,28 @@ def detect_language(
 
     return Language.UNKNOWN
 
-def lexical_relevance_score(url: str, title: str, text: str) -> float:
-    if not (has_tuebingen(url) or has_tuebingen(title) or has_tuebingen(text)):
+def lexical_relevance_score(
+    url: str,
+    title: str,
+    text: str,
+    *,
+    description: str = "",
+    h1: str = "",
+) -> float:
+    if not (
+        has_tuebingen(url)
+        or has_tuebingen(title)
+        or has_tuebingen(description)
+        or has_tuebingen(h1)
+        or has_tuebingen(text)
+    ):
         return 0.0
 
     features = {
         "url_has_tuebingen": has_tuebingen(url),
         "title_has_tuebingen": has_tuebingen(title),
+        "description_has_tuebingen": has_tuebingen(description),
+        "h1_has_tuebingen": has_tuebingen(h1),
     }
     score = sum(w for name, w in LEXICAL_CONFIG.feature_weights.items() if features[name])
     score += min(tuebingen_hits(text), 10)
@@ -151,19 +168,29 @@ def page_score(
     text: str,
     tokens: list[str],
     lang_attribute: str | None = None,
+    *,
+    description: str = "",
+    h1: str = "",
 ) -> tuple[Language, float]:
     lang = detect_language(tokens, lang_attribute)
-    lexical = lexical_relevance_score(url, title, text)
+    lexical = lexical_relevance_score(
+        url,
+        title,
+        text,
+        description=description,
+        h1=h1,
+    )
+    semantic_text = " ".join(part for part in (description, h1, text) if part)
     rel = 0.0
 
     if lexical > 0.0:
         # known-relevant page: the model only refines the lexical score
-        sim = topic_similarity(title, text)
+        sim = topic_similarity(title, semantic_text)
         floor = SEMANTIC_CONFIG.lexical_floor
         rel = lexical * (floor + (1.0 - floor) * sim)
     elif lang is Language.EN:
         # no lexical signal, the model admits clearly on-topic English pages
-        sim = topic_similarity(title, text)
+        sim = topic_similarity(title, semantic_text)
         threshold = SEMANTIC_CONFIG.admit_threshold
         if sim >= threshold:
             rel = (
@@ -180,7 +207,18 @@ def classify_page(
     title: str,
     text: str,
     lang_attribute: str | None = None,
+    *,
+    description: str = "",
+    h1: str = "",
 ) -> PageVerdict:
     tokens = _tokenize(text)
-    lang, relevance = page_score(url, title, text, tokens, lang_attribute)
+    lang, relevance = page_score(
+        url,
+        title,
+        text,
+        tokens,
+        lang_attribute,
+        description=description,
+        h1=h1,
+    )
     return PageVerdict(language=lang, relevance=relevance, token_count=len(tokens))
