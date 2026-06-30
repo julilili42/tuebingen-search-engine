@@ -75,6 +75,12 @@ def save_bundle(path: Path, bundle: dict[str, object]) -> None:
 
 
 def load_bundle(path: Path) -> dict[str, object]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Verdict model artifact not found: {path}. Train it first with "
+            "`uv run verdict-ml-train-page` or `uv run verdict-ml-train-link`, "
+            "or pass an explicit model path."
+        )
     bundle = joblib.load(path)
     if not isinstance(bundle, dict) or "model" not in bundle:
         raise ValueError(f"Invalid verdict artifact: {path}")
