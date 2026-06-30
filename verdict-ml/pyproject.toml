@@ -1,0 +1,25 @@
+[project]
+name = "verdict-ml"
+version = "0.1.0"
+description = "Page and link verdict classifiers for the focused Tuebingen crawler"
+requires-python = ">=3.14"
+dependencies = [
+    "joblib>=1.5.0",
+    "scikit-learn>=1.8.0",
+]
+
+[project.scripts]
+verdict-ml-train-page = "verdict_ml.page.train:main"
+verdict-ml-train-link = "verdict_ml.link.train:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/verdict_ml"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
