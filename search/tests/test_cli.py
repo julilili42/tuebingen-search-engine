@@ -3,37 +3,28 @@ from pathlib import Path
 
 import pytest
 
-from tuebingen_search.cli import build_parser
+from tuebingen_search.cli import build_index_parser, build_search_parser
 
 
-def test_index_command_defaults():
-    args = build_parser().parse_args(["index"])
-    assert args.command == "index"
+def test_index_defaults():
+    args = build_index_parser().parse_args([])
     assert Path(args.output).name == "index.bin"
     assert Path(args.db).name == "pages.sqlite"
 
 
-def test_index_command_custom_arguments():
-    args = build_parser().parse_args(
-        ["index", "--db", "/tmp/pages.sqlite", "-o", "/tmp/out.bin"]
-    )
+def test_index_custom_arguments():
+    args = build_index_parser().parse_args(["--db", "/tmp/pages.sqlite", "-o", "/tmp/out.bin"])
     assert args.db == Path("/tmp/pages.sqlite")
     assert args.output == Path("/tmp/out.bin")
 
 
-def test_search_command_requires_query():
+def test_search_requires_query():
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["search"])
+        build_search_parser().parse_args([])
 
 
-def test_search_command_defaults():
-    args = build_parser().parse_args(["search", "-q", "tübingen"])
-    assert args.command == "search"
+def test_search_defaults():
+    args = build_search_parser().parse_args(["-q", "tübingen"])
     assert Path(args.index).name == "index.bin"
     assert args.query == "tübingen"
     assert args.top_n == 10
-
-
-def test_command_is_required():
-    with pytest.raises(SystemExit):
-        build_parser().parse_args([])

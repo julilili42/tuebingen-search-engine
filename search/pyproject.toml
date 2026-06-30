@@ -15,7 +15,8 @@ dev = [
 ]
 
 [project.scripts]
-tuebingen-search = "tuebingen_search.main:main"
+index = "tuebingen_search.main:index_main"
+search = "tuebingen_search.main:search_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tuebingen_search"]

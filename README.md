@@ -15,10 +15,10 @@ This repo is a uv workspace with separate components, each with its own README:
 
 ```bash
 uv sync                                                    # install workspace deps
-uv run tuebingen-crawl                                     # 1. crawl pages → data/
-uv run tuebingen-search index                              # 2. build index.bin
-uv run tuebingen-search search -q "tübingen attractions"   # 3. query
+uv run crawl                                               # 1. crawl pages -> data/
+uv run index                                               # 2. build index.bin
+uv run search -q "tübingen attractions"                    # 3. query
 ```
 
-For batch evaluation, the HTTP API, the web client, and all options, see the
-component READMEs linked above (e.g. [`search/`](search/README.md)).
+For the crawl report, HTTP API, web client, and all options, see the component
+READMEs linked above (e.g. [`search/`](search/README.md)).

@@ -48,6 +48,11 @@ class PageRecord:
 class PageLoad:
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        if not self.db_path.exists():
+            raise FileNotFoundError(
+                f"Crawl database not found: {self.db_path}. Run `uv run crawl` first "
+                "or pass an existing database with `uv run index --db PATH`."
+            )
         self.con = sqlite3.connect(self.db_path)
         self.con.row_factory = sqlite3.Row
 
