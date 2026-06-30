@@ -1,0 +1,24 @@
+[project]
+name = "tuebingen-labeling"
+version = "0.1.0"
+description = "Manual relevance labeling interface for crawler and search training data"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi[standard]>=0.136.3",
+    "crawler",
+]
+
+[project.scripts]
+tuebingen-labeling = "tuebingen_labeling.server:main"
+tuebingen-export-link-candidates = "tuebingen_labeling.export.link_candidates:main"
+tuebingen-export-pageverdict = "tuebingen_labeling.export.pageverdict:main"
+
+[tool.uv.sources]
+crawler = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tuebingen_labeling"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
