@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tuebingen-crawl = "tuebingen_crawler.main:main"
+crawl = "tuebingen_crawler.main:main"
 
 [dependency-groups]
 dev = [

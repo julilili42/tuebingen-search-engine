@@ -17,7 +17,8 @@ uv sync
 ## Usage
 
 ```bash
-uv run tuebingen-crawl
+uv run crawl
+uv run crawl report --db data/pages.sqlite
 ```
 
 - Seeds are configured in `crawl/seeds.toml` — one `[[sites]]` entry per seed

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import logging
+import sys
 from pathlib import Path
+from collections.abc import Sequence
+
+from .report import report_main
 from .crawler import crawl_hostname
 from .storage import load_seed_toml
 from .models import Config
@@ -13,7 +18,8 @@ logger = logging.getLogger(__name__)
 # cap saved pages per host
 MAX_PAGES_PER_HOST = 60
 
-def main() -> None:
+
+def run_crawl() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -37,6 +43,29 @@ def main() -> None:
         except Exception as exc:
             logger.error("Failed to crawl with error %s", exc)
             return
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    if args[:1] == ["report"]:
+        report_main(args[1:])
+        return
+
+    parser = argparse.ArgumentParser(prog="crawl")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["report"],
+        help="run without a command to start the crawler",
+    )
+    parsed = parser.parse_args(args)
+    if parsed.command == "report":
+        report_main([])
+        return
+
+    run_crawl()
+
 
 if __name__ == "__main__":
     main()
