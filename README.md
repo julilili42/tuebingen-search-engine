@@ -8,7 +8,7 @@ This repo is a uv workspace with separate components:
 
 - [`crawl/`](crawl/README.md) — link crawler that fetches and stores pages
 - [`search/`](search/README.md) — BM25 index, CLI, and FastAPI search API
-- [`verdict-ml/`](verdict-ml/) — PageVerdict and LinkVerdict training
+- [`verdict-ml/`](verdict-ml/README.md) — PageVerdict and LinkVerdict training
 - [`labeling/`](labeling/README.md) — manual relevance labeling UI
 - [`client/`](client/README.md) — React frontend for the search API
 - [`legacy/`](legacy/README.md) — earlier Go/Rust prototypes (not maintained)

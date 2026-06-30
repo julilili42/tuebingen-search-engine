@@ -47,16 +47,3 @@ Link candidates are stored with parent page context, anchor/target metadata,
 LinkVerdict score/label/model, enqueue/selection decisions, rejection reasons,
 and target page outcome metadata (`target_status`, target PageVerdict fields,
 target rejection reason, etc.).
-
-## Training Exports
-
-Crawler exports are available through `CrawlExportDB` in
-`tuebingen_crawler.save_pages` and are covered by tests. The `verdict-ml`
-training commands consume the labeling database and crawl outcome data:
-
-```bash
-uv run verdict-ml-train-page
-uv run verdict-ml-train-link --crawl-db data/pages.sqlite
-```
-
-Model artifacts are expected under `verdict-ml/artifacts/`.

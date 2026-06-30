@@ -1,60 +1,38 @@
 # Labeling
 
-Standalone labeling UI for collecting relevance training data for crawler
-verdicts and later search ranking experiments.
+Manual labeling UI for PageVerdict and LinkVerdict training data.
 
-The UI stores its own data in `labeling/data/labeling.sqlite`. The optional
-crawler export commands read the crawl database through the `crawler` workspace
-package and emit CSVs that can be imported into the labeling UI.
+Data is stored in `labeling/data/labeling.sqlite`.
 
-Configure Serper:
-
-```bash
-export SERPER_API_KEY="..."
-```
-
-Run from the project root:
+Run the UI:
 
 ```bash
 uv run tuebingen-labeling
 ```
-
-Then open:
 
 ```text
 http://127.0.0.1:8010
 ```
 
-Serper workflow:
+Serper search needs:
 
-```text
-query -> Serper result pages 1-4 -> title/url/snippet -> rating 1-5
+```bash
+export SERPER_API_KEY="..."
 ```
 
-Crawler candidate relabeling workflows:
+Import crawler candidates:
 
 ```bash
 uv run tuebingen-export-pageverdict
 uv run tuebingen-export-link-candidates
-uv run tuebingen-labeling
 ```
 
-Then use the Candidate CSV import controls in the UI with:
+Then import in the UI:
 
-- `data/pageverdict_candidates.csv` for fresh crawler decisions
-- `data/pageverdict_error_candidates.csv` for PageVerdict validation errors and boundary cases
-- `data/link_candidates.csv` in `Links` mode for link-follow decisions
+- `data/pageverdict_candidates.jsonl` for fresh crawler decisions
+- `data/link_candidates.jsonl` in `Links` mode for link-follow decisions
 
-Imported candidates are stored in the same `serp_results` table and are sorted
-by model uncertainty first, with validation errors shown before boundary cases.
-Link candidates are stored separately in `link_results` and can be exported at
-`http://127.0.0.1:8010/api/export/link-labels.csv`.
-
-Starter queries:
-
-- `labeling/queries/tuebingen_serp_queries.txt`
-
-Rating convention:
+Ratings:
 
 - `1`: reject
 - `2`: bad
@@ -64,7 +42,9 @@ Rating convention:
 
 The API maps `1-2` to `negative`, `3` to `skip`, and `4-5` to `positive`.
 
-CSV exports:
+Exports:
 
-- `http://127.0.0.1:8010/api/export/serp-labels.csv`
-- `http://127.0.0.1:8010/api/export/link-labels.csv`
+- `http://127.0.0.1:8010/api/export/serp-labels.jsonl`
+- `http://127.0.0.1:8010/api/export/link-labels.jsonl`
+
+Starter queries live in `labeling/queries/tuebingen_serp_queries.txt`.
