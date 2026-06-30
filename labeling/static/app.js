@@ -34,8 +34,8 @@ const linkRatings = [
 ]
 
 const defaultPaths = {
-  pages: "data/pageverdict_error_candidates.csv",
-  links: "data/link_candidates.csv",
+  pages: "data/pageverdict_candidates.jsonl",
+  links: "data/link_candidates.jsonl",
 }
 
 function escapeHtml(value) {
@@ -302,7 +302,7 @@ async function importCrawlerCandidates() {
   const endpoint = mode === "links" ? "/api/import/link-candidates" : "/api/import/crawler-pageverdict"
   importCrawlerButton.disabled = true
   loadCrawlerButton.disabled = true
-  setStatus("Importing candidate CSV...")
+  setStatus("Importing candidate JSONL...")
   items.innerHTML = `<div class="empty">Loading candidates...</div>`
 
   try {

@@ -15,12 +15,12 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=DEFAULT_DATA_DIR / "pageverdict_candidates.csv",
+        default=DEFAULT_DATA_DIR / "pageverdict_candidates.jsonl",
     )
     args = parser.parse_args()
 
     with CrawlExportDB(args.db) as store:
-        store.export_pageverdict_csv(args.out)
+        store.export_pageverdict_jsonl(args.out)
 
     print(args.out)
 

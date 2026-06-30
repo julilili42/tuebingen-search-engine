@@ -21,18 +21,18 @@
         <div class="search-row">
           <input id="search-query" value="Tübingen tourism english" autofocus />
           <button id="search" type="button">Search</button>
-          <a class="export" href="/api/export/serp-labels.csv">Export CSV</a>
+          <a class="export" href="/api/export/serp-labels.jsonl">Export JSONL</a>
         </div>
       </section>
 
       <section class="search-panel">
-        <label class="query-label" for="crawler-csv-path">Candidate CSV</label>
+        <label class="query-label" for="crawler-csv-path">Candidate JSONL</label>
         <div class="search-row">
           <select id="candidate-mode">
             <option value="pages">Pages</option>
             <option value="links" selected>Links</option>
           </select>
-          <input id="crawler-csv-path" value="data/link_candidates.csv" />
+          <input id="crawler-csv-path" value="data/link_candidates.jsonl" />
           <input id="crawler-limit" class="small-input" type="number" min="1" max="2000" value="200" />
           <label class="check-label">
             <input id="crawler-unlabeled-only" type="checkbox" checked />
@@ -40,7 +40,7 @@
           </label>
           <button id="import-crawler" type="button">Import</button>
           <button id="load-crawler" type="button">Load candidates</button>
-          <a class="export" href="/api/export/link-labels.csv">Export link labels</a>
+          <a class="export" href="/api/export/link-labels.jsonl">Export link labels</a>
         </div>
       </section>
 

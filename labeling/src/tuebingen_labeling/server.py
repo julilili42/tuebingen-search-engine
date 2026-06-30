@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import io
 import json
 import os
@@ -131,14 +130,14 @@ class LinkRatingRequest(BaseModel):
 
 
 class CrawlerImportRequest(BaseModel):
-    path: str = "data/pageverdict_candidates.csv"
+    path: str = "data/pageverdict_candidates.jsonl"
     query: str = "crawler:pageverdict"
     limit: int = Field(default=200, ge=1, le=2000)
     unlabeled_only: bool = True
 
 
 class LinkImportRequest(BaseModel):
-    path: str = "data/link_candidates.csv"
+    path: str = "data/link_candidates.jsonl"
     limit: int = Field(default=200, ge=1, le=2000)
     unlabeled_only: bool = True
 
@@ -520,20 +519,20 @@ def upsert_results(con: sqlite3.Connection, results: list[dict[str, object]]) ->
         )
 
 
-def crawler_result_from_csv_row(
-    row: dict[str, str],
+def crawler_result_from_record(
+    row: dict[str, object],
     *,
     query: str,
     fallback_rank: int,
 ) -> dict[str, object] | None:
-    url = (row.get("url") or "").strip()
+    url = str(row.get("url") or "").strip()
     if not url:
         return None
 
     rank = optional_int(row.get("rank")) or fallback_rank
     page_number = optional_int(row.get("page")) or 1
-    source = (row.get("source") or "crawler_pageverdict").strip() or "crawler_pageverdict"
-    row_query = clean_query(row.get("query") or "")
+    source = str(row.get("source") or "crawler_pageverdict").strip() or "crawler_pageverdict"
+    row_query = clean_query(str(row.get("query") or ""))
     result_query = row_query if source != "crawler_pageverdict" and row_query else query
 
     return {
@@ -541,12 +540,12 @@ def crawler_result_from_csv_row(
         "normalized_url": normalized_url(url),
         "page_number": page_number,
         "rank": rank,
-        "title": row.get("title") or "",
+        "title": str(row.get("title") or ""),
         "url": url,
-        "display_url": row.get("display_url") or urlparse(url).hostname or "",
-        "snippet": row.get("snippet") or "",
+        "display_url": str(row.get("display_url") or urlparse(url).hostname or ""),
+        "snippet": str(row.get("snippet") or ""),
         "source": source,
-        "notes": row.get("notes") or "",
+        "notes": str(row.get("notes") or ""),
         "pageverdict_score": optional_float(row.get("pageverdict_score")),
         "pageverdict_label": row.get("pageverdict_label") or None,
         "pageverdict_decision": row.get("pageverdict_decision") or None,
@@ -561,30 +560,39 @@ def crawler_result_from_csv_row(
     }
 
 
-def read_crawler_csv(path: Path, query: str) -> list[dict[str, object]]:
-    with path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        results: list[dict[str, object]] = []
-        for index, row in enumerate(reader, start=1):
-            result = crawler_result_from_csv_row(
-                row,
-                query=query,
-                fallback_rank=index,
-            )
-            if result is not None:
-                results.append(result)
+def read_records(path: Path) -> list[dict[str, object]]:
+    if path.suffix != ".jsonl":
+        raise ValueError("candidate files must be JSONL")
+    with path.open(encoding="utf-8") as file:
+        return [
+            json.loads(line)
+            for line in file
+            if line.strip()
+        ]
+
+
+def read_crawler_candidates(path: Path, query: str) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for index, row in enumerate(read_records(path), start=1):
+        result = crawler_result_from_record(
+            row,
+            query=query,
+            fallback_rank=index,
+        )
+        if result is not None:
+            results.append(result)
     return results
 
 
-def link_result_from_csv_row(
-    row: dict[str, str],
+def link_result_from_record(
+    row: dict[str, object],
 ) -> dict[str, object] | None:
-    target_url = (row.get("target_url") or row.get("url") or "").strip()
+    target_url = str(row.get("target_url") or row.get("url") or "").strip()
     if not target_url:
         return None
 
-    parent_url = (row.get("parent_url") or "").strip()
-    anchor = row.get("anchor") or ""
+    parent_url = str(row.get("parent_url") or "").strip()
+    anchor = str(row.get("anchor") or "")
     return {
         "parent_url": parent_url,
         "parent_host": row.get("parent_host") or urlparse(parent_url).hostname or "",
@@ -620,14 +628,12 @@ def link_result_from_csv_row(
     }
 
 
-def read_link_csv(path: Path) -> list[dict[str, object]]:
-    with path.open(newline="", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        results: list[dict[str, object]] = []
-        for row in reader:
-            result = link_result_from_csv_row(row)
-            if result is not None:
-                results.append(result)
+def read_link_candidates(path: Path) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for row in read_records(path):
+        result = link_result_from_record(row)
+        if result is not None:
+            results.append(result)
     return results
 
 
@@ -1248,14 +1254,14 @@ def import_crawler_pageverdict(payload: CrawlerImportRequest) -> CrawlerImportRe
 
     path = resolve_import_path(payload.path)
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"csv_not_found: {path}")
+        raise HTTPException(status_code=404, detail=f"candidate_file_not_found: {path}")
     if not path.is_file():
         raise HTTPException(status_code=400, detail=f"not_a_file: {path}")
 
     try:
-        imported = read_crawler_csv(path, query)
-    except csv.Error as exc:
-        raise HTTPException(status_code=400, detail=f"invalid_csv: {exc}") from exc
+        imported = read_crawler_candidates(path, query)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_candidate_file: {exc}") from exc
 
     with connect() as con:
         with con:
@@ -1290,14 +1296,14 @@ def get_crawler_candidates(
 def import_link_candidates(payload: LinkImportRequest) -> LinkImportResponse:
     path = resolve_import_path(payload.path)
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"csv_not_found: {path}")
+        raise HTTPException(status_code=404, detail=f"candidate_file_not_found: {path}")
     if not path.is_file():
         raise HTTPException(status_code=400, detail=f"not_a_file: {path}")
 
     try:
-        imported = read_link_csv(path)
-    except csv.Error as exc:
-        raise HTTPException(status_code=400, detail=f"invalid_csv: {exc}") from exc
+        imported = read_link_candidates(path)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_candidate_file: {exc}") from exc
 
     with connect() as con:
         with con:
@@ -1448,56 +1454,22 @@ def link_stats() -> LabelStats:
     )
 
 
-def csv_response(
+def jsonl_response(
     filename: str,
     rows: list[sqlite3.Row],
-    empty_fieldnames: list[str] | None = None,
 ) -> StreamingResponse:
     buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    if rows:
-        writer.writerow(rows[0].keys())
-        for row in rows:
-            writer.writerow([row[key] for key in row.keys()])
-    else:
-        writer.writerow(
-            empty_fieldnames
-            or [
-                "query",
-                "page_number",
-                "rank",
-                "title",
-                "url",
-                "display_url",
-                "snippet",
-                "source",
-                "rating",
-                "label",
-                "notes",
-                "pageverdict_score",
-                "pageverdict_label",
-                "pageverdict_decision",
-                "pageverdict_model",
-                "crawler_source_table",
-                "crawler_exclusion_reason",
-                "crawler_status_code",
-                "crawler_content_type",
-                "crawler_depth",
-                "crawler_relevance",
-                "crawler_token_count",
-                "created_at",
-                "updated_at",
-                "rated_at",
-            ]
-        )
+    for row in rows:
+        buffer.write(json.dumps({key: row[key] for key in row.keys()}, ensure_ascii=False))
+        buffer.write("\n")
     return StreamingResponse(
         iter([buffer.getvalue()]),
-        media_type="text/csv",
+        media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
-@app.get("/api/export/serp-labels.csv")
+@app.get("/api/export/serp-labels.jsonl")
 def export_serp_labels() -> StreamingResponse:
     with connect() as con:
         rows = con.execute(
@@ -1532,49 +1504,11 @@ def export_serp_labels() -> StreamingResponse:
             ORDER BY query, page_number, rank, id
             """
         ).fetchall()
-    return csv_response("serp-labels.csv", rows)
+    return jsonl_response("serp-labels.jsonl", rows)
 
 
-@app.get("/api/export/link-labels.csv")
+@app.get("/api/export/link-labels.jsonl")
 def export_link_labels() -> StreamingResponse:
-    fieldnames = [
-        "parent_url",
-        "parent_host",
-        "parent_depth",
-        "parent_pageverdict_score",
-        "parent_pageverdict_label",
-        "parent_pageverdict_decision",
-        "parent_relevance",
-        "anchor",
-        "target_url",
-        "target_host",
-        "target_depth",
-        "raw_score",
-        "linkverdict_score",
-        "linkverdict_label",
-        "linkverdict_model",
-        "should_enqueue",
-        "selected",
-        "rejection_reason",
-        "target_status",
-        "target_status_code",
-        "target_content_type",
-        "target_language",
-        "target_relevance",
-        "target_token_count",
-        "target_pageverdict_score",
-        "target_pageverdict_label",
-        "target_pageverdict_decision",
-        "target_exclusion_reason",
-        "target_fetched_at",
-        "source",
-        "rating",
-        "label",
-        "notes",
-        "created_at",
-        "updated_at",
-        "rated_at",
-    ]
     with connect() as con:
         rows = con.execute(
             """
@@ -1619,7 +1553,7 @@ def export_link_labels() -> StreamingResponse:
             ORDER BY target_url, parent_url, id
             """
         ).fetchall()
-    return csv_response("link-labels.csv", rows, empty_fieldnames=fieldnames)
+    return jsonl_response("link-labels.jsonl", rows)
 
 
 def main() -> None:

@@ -1,6 +1,13 @@
+import json
 import sqlite3
 
-from tuebingen_labeling.server import init_schema, link_candidates, upsert_link_results
+from tuebingen_labeling.server import (
+    init_schema,
+    link_candidates,
+    read_crawler_candidates,
+    read_link_candidates,
+    upsert_link_results,
+)
 
 
 def make_connection() -> sqlite3.Connection:
@@ -77,3 +84,46 @@ def test_link_candidates_push_navigation_noise_behind_content_links():
     [first] = link_candidates(con, limit=1, unlabeled_only=True)
 
     assert first.target_host == "content.example"
+
+
+def test_reads_page_candidates_from_jsonl(tmp_path):
+    path = tmp_path / "pageverdict_candidates.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "query": "crawler:index_strong",
+                "rank": 1,
+                "title": "Tuebingen",
+                "url": "https://example.com/",
+                "display_url": "example.com",
+                "snippet": "A useful page.",
+                "source": "crawler_pageverdict",
+                "pageverdict_score": 0.91,
+                "pageverdict_label": "positive",
+                "pageverdict_decision": "index_strong",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [result] = read_crawler_candidates(path, "crawler:pageverdict")
+
+    assert result["title"] == "Tuebingen"
+    assert result["pageverdict_score"] == 0.91
+    assert result["pageverdict_decision"] == "index_strong"
+
+
+def test_reads_link_candidates_from_jsonl(tmp_path):
+    path = tmp_path / "link_candidates.jsonl"
+    record = link_record("example.com", 1)
+    record["target_status"] = "page"
+    record["target_pageverdict_score"] = 0.88
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    [result] = read_link_candidates(path)
+
+    assert result["target_url"] == "https://example.com/page-1"
+    assert result["source"] == "crawler_linkverdict"
+    assert result["target_status"] == "page"
+    assert result["target_pageverdict_score"] == 0.88
