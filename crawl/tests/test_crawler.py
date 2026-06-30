@@ -5,7 +5,8 @@ from urllib.robotparser import RobotFileParser
 import httpx
 import pytest
 
-from tuebingen_crawler.crawler import CrawlRun, evaluate_links
+from tuebingen_crawler.crawler import CrawlRun
+from tuebingen_crawler.link_evaluation import evaluate_links
 from tuebingen_crawler.link_classifier import classify_link
 from tuebingen_crawler.models import CrawlSite, CrawlState
 from tuebingen_crawler.save_pages import LinkStore, PageStore
@@ -371,6 +372,28 @@ def test_evaluate_links_passes_saved_host_counts_to_frontier():
     )
     expected_score = verdict.frontier_score - 0.7 * 1 - 0.9 * math.log1p(3)
     assert state.frontier[0].heap_priority == pytest.approx(-expected_score)
+
+
+def test_run_chunk_processes_at_most_max_pages(client, tmp_path, page_store):
+    with LinkStore(tmp_path / "pages.sqlite") as link_store:
+        run = CrawlRun(
+            client=client,
+            site=make_site(),
+            save_dir=tmp_path,
+            save_state_every=10,
+            page_store=page_store,
+            link_store=link_store,
+            robot_parser=allow_all_robots(),
+            user_agent="TestCrawler/1.0",
+            page_critic=FakePagePredictor(),
+            link_critic=FakeLinkPredictor(),
+        )
+        run.prepare()
+        run.run_chunk(1)
+
+        # exactly one URL consumed; the root's Tübingen links remain queued
+        assert run.state.statistics.discovered == 1
+        assert run.has_work
 
 
 def test_crawl_run_updates_statistics(client, tmp_path, page_store):
