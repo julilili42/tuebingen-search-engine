@@ -1,4 +1,4 @@
-import csv
+import json
 import sqlite3
 
 import pytest
@@ -372,9 +372,9 @@ def test_link_store_rejects_existing_db_with_incompatible_schema(tmp_path):
         LinkStore(db_path)
 
 
-def test_crawl_export_db_exports_pageverdict_csv(tmp_path):
+def test_crawl_export_db_exports_pageverdict_jsonl(tmp_path):
     db_path = tmp_path / "pages.sqlite"
-    out = tmp_path / "pageverdict.csv"
+    out = tmp_path / "pageverdict.jsonl"
     with PageStore(db_path) as store:
         store.upsert_page(
             title="Kept",
@@ -401,20 +401,20 @@ def test_crawl_export_db_exports_pageverdict_csv(tmp_path):
         )
 
     with CrawlExportDB(db_path) as export_db:
-        export_db.export_pageverdict_csv(out)
+        export_db.export_pageverdict_jsonl(out)
 
-    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 2
     assert rows[0]["source"] == "crawler_pageverdict"
     assert rows[0]["title"] == "Kept"
-    assert rows[0]["pageverdict_score"] == "0.9"
+    assert rows[0]["pageverdict_score"] == 0.9
     assert rows[1]["source_table"] == "rejected_pages"
     assert rows[1]["exclusion_reason"] == "low_pageverdict_score"
 
 
-def test_crawl_export_db_exports_linkverdict_csv(tmp_path):
+def test_crawl_export_db_exports_linkverdict_jsonl(tmp_path):
     db_path = tmp_path / "pages.sqlite"
-    out = tmp_path / "linkverdict.csv"
+    out = tmp_path / "linkverdict.jsonl"
     with LinkStore(db_path) as store:
         store.upsert_link_candidates(
             [
@@ -459,15 +459,15 @@ def test_crawl_export_db_exports_linkverdict_csv(tmp_path):
         )
 
     with CrawlExportDB(db_path) as export_db:
-        export_db.export_linkverdict_csv(out)
+        export_db.export_linkverdict_jsonl(out)
 
-    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 1
     assert rows[0]["query"] == "crawler:linkverdict"
     assert rows[0]["source"] == "crawler_linkverdict"
     assert rows[0]["anchor"] == "Tübingen A"
     assert rows[0]["target_url"] == "https://host/a"
-    assert rows[0]["linkverdict_score"] == "0.77"
-    assert rows[0]["selected"] == "1"
+    assert rows[0]["linkverdict_score"] == 0.77
+    assert rows[0]["selected"] is True
     assert rows[0]["target_status"] == "page"
-    assert rows[0]["target_pageverdict_score"] == "0.9"
+    assert rows[0]["target_pageverdict_score"] == 0.9

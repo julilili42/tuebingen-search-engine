@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sqlite3
 from dataclasses import asdict, dataclass
@@ -191,45 +190,25 @@ def write_validation_predictions(
         for probability in probabilities
     ]
 
-    with output_path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "id",
-                "rating",
-                "label",
-                "prediction",
-                "positive_probability",
-                "parent_host",
-                "target_host",
-                "anchor",
-                "target_url",
-                "parent_url",
-                "raw_score",
-                "parent_pageverdict_score",
-                "parent_pageverdict_decision",
-            ],
-        )
-        writer.writeheader()
+    with output_path.open("w", encoding="utf-8") as file:
         for example, prediction, probability in zip(valid, y_pred, probabilities, strict=True):
             row = asdict(example)
-            writer.writerow(
-                {
-                    "id": row["id"],
-                    "rating": row["rating"],
-                    "label": row["label"],
-                    "prediction": prediction,
-                    "positive_probability": f"{probability:.6f}",
-                    "parent_host": row["parent_host"],
-                    "target_host": row["target_host"],
-                    "anchor": row["anchor"],
-                    "target_url": row["target_url"],
-                    "parent_url": row["parent_url"],
-                    "raw_score": row["raw_score"],
-                    "parent_pageverdict_score": row["parent_pageverdict_score"],
-                    "parent_pageverdict_decision": row["parent_pageverdict_decision"],
-                }
-            )
+            record = {
+                "id": row["id"],
+                "rating": row["rating"],
+                "label": row["label"],
+                "prediction": prediction,
+                "positive_probability": round(float(probability), 6),
+                "parent_host": row["parent_host"],
+                "target_host": row["target_host"],
+                "anchor": row["anchor"],
+                "target_url": row["target_url"],
+                "parent_url": row["parent_url"],
+                "raw_score": row["raw_score"],
+                "parent_pageverdict_score": row["parent_pageverdict_score"],
+                "parent_pageverdict_decision": row["parent_pageverdict_decision"],
+            }
+            file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def main() -> None:
@@ -293,7 +272,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     model_path = args.out / DEFAULT_MODEL_PATH.name
     metrics_path = args.out / "link_metrics.json"
-    predictions_path = args.out / "link_validation_predictions.csv"
+    predictions_path = args.out / "link_validation_predictions.jsonl"
 
     final_model = build_model()
     final_model.fit(

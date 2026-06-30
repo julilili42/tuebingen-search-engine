@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sqlite3
 from dataclasses import asdict, dataclass
@@ -100,41 +99,23 @@ def write_validation_predictions(model, valid: list[Example], output_path: Path)
     positive_index = list(model.classes_).index("positive")
     probabilities = model.predict_proba(x_valid)[:, positive_index]
 
-    with output_path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file,
-            fieldnames=[
-                "id",
-                "query",
-                "host",
-                "rating",
-                "label",
-                "prediction",
-                "positive_probability",
-                "title",
-                "url",
-                "display_url",
-                "snippet",
-            ],
-        )
-        writer.writeheader()
+    with output_path.open("w", encoding="utf-8") as file:
         for example, prediction, probability in zip(valid, y_pred, probabilities, strict=True):
             row = asdict(example)
-            writer.writerow(
-                {
-                    "id": row["id"],
-                    "query": row["query"],
-                    "host": row["host"],
-                    "rating": row["rating"],
-                    "label": row["label"],
-                    "prediction": prediction,
-                    "positive_probability": f"{probability:.6f}",
-                    "title": row["title"],
-                    "url": row["url"],
-                    "display_url": row["display_url"],
-                    "snippet": row["snippet"],
-                }
-            )
+            record = {
+                "id": row["id"],
+                "query": row["query"],
+                "host": row["host"],
+                "rating": row["rating"],
+                "label": row["label"],
+                "prediction": prediction,
+                "positive_probability": round(float(probability), 6),
+                "title": row["title"],
+                "url": row["url"],
+                "display_url": row["display_url"],
+                "snippet": row["snippet"],
+            }
+            file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def main() -> None:
@@ -166,7 +147,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     model_path = args.out / "page_verdict.joblib"
     metrics_path = args.out / "page_metrics.json"
-    predictions_path = args.out / "page_validation_predictions.csv"
+    predictions_path = args.out / "page_validation_predictions.jsonl"
 
     final_model = build_model()
     final_model.fit(

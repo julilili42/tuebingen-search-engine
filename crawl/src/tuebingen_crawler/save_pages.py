@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import csv
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -761,7 +761,7 @@ class CrawlExportDB:
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    def export_pageverdict_csv(self, path: Path) -> None:
+    def export_pageverdict_jsonl(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         rows = self.con.execute(
             """
@@ -815,68 +815,38 @@ class CrawlExportDB:
             """
         ).fetchall()
 
-        fieldnames = [
-            "query",
-            "page",
-            "rank",
-            "title",
-            "url",
-            "display_url",
-            "snippet",
-            "rating",
-            "label",
-            "notes",
-            "source",
-            "source_table",
-            "status_code",
-            "content_type",
-            "crawl_depth",
-            "language",
-            "relevance",
-            "token_count",
-            "pageverdict_score",
-            "pageverdict_label",
-            "pageverdict_decision",
-            "pageverdict_model",
-            "fetched_at",
-            "indexed_at",
-            "exclusion_reason",
-        ]
-        with path.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
+        with path.open("w", encoding="utf-8") as file:
             for rank, row in enumerate(rows, start=1):
-                writer.writerow(
-                    {
-                        "query": f"crawler:{row['pageverdict_decision']}",
-                        "page": "",
-                        "rank": rank,
-                        "title": row["title"],
-                        "url": row["url"],
-                        "display_url": row["host"],
-                        "snippet": row["pageverdict_snippet"],
-                        "rating": "",
-                        "label": "",
-                        "notes": "",
-                        "source": "crawler_pageverdict",
-                        "source_table": row["source_table"],
-                        "status_code": row["status_code"],
-                        "content_type": row["content_type"],
-                        "crawl_depth": row["crawl_depth"],
-                        "language": row["language"],
-                        "relevance": row["relevance"],
-                        "token_count": row["token_count"],
-                        "pageverdict_score": row["pageverdict_score"],
-                        "pageverdict_label": row["pageverdict_label"],
-                        "pageverdict_decision": row["pageverdict_decision"],
-                        "pageverdict_model": row["pageverdict_model"],
-                        "fetched_at": row["fetched_at"],
-                        "indexed_at": row["indexed_at"],
-                        "exclusion_reason": row["exclusion_reason"],
-                    }
-                )
+                record = {
+                    "query": f"crawler:{row['pageverdict_decision']}",
+                    "page": None,
+                    "rank": rank,
+                    "title": row["title"],
+                    "url": row["url"],
+                    "display_url": row["host"],
+                    "snippet": row["pageverdict_snippet"],
+                    "rating": None,
+                    "label": None,
+                    "notes": "",
+                    "source": "crawler_pageverdict",
+                    "source_table": row["source_table"],
+                    "status_code": row["status_code"],
+                    "content_type": row["content_type"],
+                    "crawl_depth": row["crawl_depth"],
+                    "language": row["language"],
+                    "relevance": row["relevance"],
+                    "token_count": row["token_count"],
+                    "pageverdict_score": row["pageverdict_score"],
+                    "pageverdict_label": row["pageverdict_label"],
+                    "pageverdict_decision": row["pageverdict_decision"],
+                    "pageverdict_model": row["pageverdict_model"],
+                    "fetched_at": row["fetched_at"],
+                    "indexed_at": row["indexed_at"],
+                    "exclusion_reason": row["exclusion_reason"],
+                }
+                file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def export_linkverdict_csv(self, path: Path) -> None:
+    def export_linkverdict_jsonl(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         rows = self.con.execute(
             """
@@ -890,91 +860,46 @@ class CrawlExportDB:
             """
         ).fetchall()
 
-        fieldnames = [
-            "query",
-            "page",
-            "rank",
-            "parent_url",
-            "parent_host",
-            "parent_depth",
-            "parent_pageverdict_score",
-            "parent_pageverdict_label",
-            "parent_pageverdict_decision",
-            "parent_relevance",
-            "anchor",
-            "target_url",
-            "target_host",
-            "target_depth",
-            "raw_score",
-            "linkverdict_score",
-            "linkverdict_label",
-            "linkverdict_model",
-            "should_enqueue",
-            "selected",
-            "rejection_reason",
-            "target_status",
-            "target_status_code",
-            "target_content_type",
-            "target_language",
-            "target_relevance",
-            "target_token_count",
-            "target_pageverdict_score",
-            "target_pageverdict_label",
-            "target_pageverdict_decision",
-            "target_exclusion_reason",
-            "target_fetched_at",
-            "rating",
-            "label",
-            "notes",
-            "source",
-            "created_at",
-            "updated_at",
-        ]
-        with path.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
+        with path.open("w", encoding="utf-8") as file:
             for rank, row in enumerate(rows, start=1):
-                writer.writerow(
-                    {
-                        "query": "crawler:linkverdict",
-                        "page": "",
-                        "rank": rank,
-                        "parent_url": row["parent_url"],
-                        "parent_host": row["parent_host"],
-                        "parent_depth": row["parent_depth"],
-                        "parent_pageverdict_score": row["parent_pageverdict_score"],
-                        "parent_pageverdict_label": row["parent_pageverdict_label"],
-                        "parent_pageverdict_decision": row[
-                            "parent_pageverdict_decision"
-                        ],
-                        "parent_relevance": row["parent_relevance"],
-                        "anchor": row["anchor"],
-                        "target_url": row["target_url"],
-                        "target_host": row["target_host"],
-                        "target_depth": row["target_depth"],
-                        "raw_score": row["raw_score"],
-                        "linkverdict_score": row["linkverdict_score"],
-                        "linkverdict_label": row["linkverdict_label"],
-                        "linkverdict_model": row["linkverdict_model"],
-                        "should_enqueue": row["should_enqueue"],
-                        "selected": row["selected"],
-                        "rejection_reason": row["rejection_reason"],
-                        "target_status": row["target_status"],
-                        "target_status_code": row["target_status_code"],
-                        "target_content_type": row["target_content_type"],
-                        "target_language": row["target_language"],
-                        "target_relevance": row["target_relevance"],
-                        "target_token_count": row["target_token_count"],
-                        "target_pageverdict_score": row["target_pageverdict_score"],
-                        "target_pageverdict_label": row["target_pageverdict_label"],
-                        "target_pageverdict_decision": row["target_pageverdict_decision"],
-                        "target_exclusion_reason": row["target_exclusion_reason"],
-                        "target_fetched_at": row["target_fetched_at"],
-                        "rating": "",
-                        "label": "",
-                        "notes": "",
-                        "source": "crawler_linkverdict",
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"],
-                    }
-                )
+                record = {
+                    "query": "crawler:linkverdict",
+                    "page": None,
+                    "rank": rank,
+                    "parent_url": row["parent_url"],
+                    "parent_host": row["parent_host"],
+                    "parent_depth": row["parent_depth"],
+                    "parent_pageverdict_score": row["parent_pageverdict_score"],
+                    "parent_pageverdict_label": row["parent_pageverdict_label"],
+                    "parent_pageverdict_decision": row["parent_pageverdict_decision"],
+                    "parent_relevance": row["parent_relevance"],
+                    "anchor": row["anchor"],
+                    "target_url": row["target_url"],
+                    "target_host": row["target_host"],
+                    "target_depth": row["target_depth"],
+                    "raw_score": row["raw_score"],
+                    "linkverdict_score": row["linkverdict_score"],
+                    "linkverdict_label": row["linkverdict_label"],
+                    "linkverdict_model": row["linkverdict_model"],
+                    "should_enqueue": bool(row["should_enqueue"]),
+                    "selected": bool(row["selected"]),
+                    "rejection_reason": row["rejection_reason"],
+                    "target_status": row["target_status"],
+                    "target_status_code": row["target_status_code"],
+                    "target_content_type": row["target_content_type"],
+                    "target_language": row["target_language"],
+                    "target_relevance": row["target_relevance"],
+                    "target_token_count": row["target_token_count"],
+                    "target_pageverdict_score": row["target_pageverdict_score"],
+                    "target_pageverdict_label": row["target_pageverdict_label"],
+                    "target_pageverdict_decision": row["target_pageverdict_decision"],
+                    "target_exclusion_reason": row["target_exclusion_reason"],
+                    "target_fetched_at": row["target_fetched_at"],
+                    "rating": None,
+                    "label": None,
+                    "notes": "",
+                    "source": "crawler_linkverdict",
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                file.write(json.dumps(record, ensure_ascii=False) + "\n")
